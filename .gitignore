@@ -1,0 +1,46 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+# Libraries should not include pubspec.lock, per https://dart.dev/guides/libraries/private-files#pubspeclock.
+# The example app's lock file (example/pubspec.lock) is committed.
+/pubspec.lock
+**/doc/api/
+.dart_tool/
+.flutter-plugins-dependencies
+/build/
+/coverage/
+
+# The example app. Its own .gitignore files (example/, example/android/,
+# example/ios/) cover the rest; these lines repeat its build outputs so they
+# stay out even if those files change.
+/example/build/
+/example/coverage/
+/example/.flutter-plugins-dependencies
+/example/android/.gradle/
+/example/android/local.properties
+/example/ios/Flutter/ephemeral/
+
+# The example's Zehn Intelligence config files hold its app keys. They are
+# downloaded from the Console and never committed.
+/example/config/*.json
