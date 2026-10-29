@@ -1,0 +1,29 @@
+name: zehn_intelligence
+description: >-
+  Zehn Intelligence SDK: an in-app AI assistant for Flutter apps. It answers
+  the user's requests with the app's own tools and the app's own widgets.
+version: 0.0.1
+repository: https://github.com/zehnmind/zehn-intelligence_mobile
+
+# Not published anywhere yet: apps depend on this package through git. Where
+# it is published, and how it is versioned, is decided in task P4-SDK-01.
+publish_to: none
+
+environment:
+  # The floor is the toolchain the SDK is developed and tested on: Flutter
+  # 3.47.6 (stable) with Dart 3.13.5. Lower it only after the SDK has been
+  # tested on the older version.
+  sdk: ^3.13.0
+  flutter: ">=3.47.0"
+
+# Only Flutter for now. Each dependency comes with the task that needs it
+# (for example `http` with the transport, `package_info_plus` with the config
+# checks), so the SDK pulls as few packages into the host app as it can.
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
