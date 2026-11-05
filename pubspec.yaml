@@ -1,0 +1,32 @@
+name: zehn_intelligence
+description: >-
+  An in-app AI assistant for Flutter apps, with voice. The model only proposes;
+  your app validates, asks, runs its own repositories and draws its own
+  widgets.
+version: 0.3.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+  flutter: ">=3.35.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  audioplayers: ^6.8.1
+  dio: ^5.9.0
+  equatable: ">=2.0.7 <4.0.0"
+  flutter_bloc: ^9.1.1
+  package_info_plus: ">=8.0.0 <12.0.0"
+  path_provider: ^2.1.5
+  record: ^7.1.1
+
+dev_dependencies:
+  bloc_test: ^10.0.0
+  flutter_lints: ^6.0.0
+  flutter_localizations:
+    sdk: flutter
+  flutter_test:
+    sdk: flutter
+  go_router: ^17.5.0
+  mocktail: ^1.0.5
