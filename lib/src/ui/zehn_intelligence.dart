@@ -1,7 +1,10 @@
-import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
-
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 
 import 'package:dio/dio.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -132,11 +135,22 @@ class ZehnIntelligence {
   static void registerTool(String name, Future<Map<String, Object?>> Function(Map<String, Object?>) handler) {
     registeredTools[name] = handler;
     if (instance != null) {
+      final parts = name.split('.');
+      final domain = parts.first.replaceAll('_', ' ');
+      final verb = parts.length > 1 ? parts.last.replaceAll('_', ' ') : '';
       instance!.tools.add(
         AgentTool(
           name: name,
           description: name,
           kind: ToolKind.read,
+          doc: ToolDoc(
+            summary: name,
+            examples: {
+              'en': [domain, '$domain $verb', '$verb $domain', ...domain.split(' ')],
+              'uz': [domain, ...domain.split(' ')],
+              'ru': [domain, ...domain.split(' ')],
+            },
+          ),
           run: (call) async {
             try {
               final res = await handler(call.args);
@@ -162,25 +176,70 @@ class ZehnIntelligence {
   }
 
   /// Quick initialization helper used by the integrator.
-  /// Throws [ZiConfigException] when configuration is absent, allowing the app
-  /// to run cleanly without the assistant when unconfigured.
+  /// Reads configuration from [configPath] (defaults to 'lib/config/zehn-intelligence.prod.json')
+  /// or from environment variables (--dart-define / --dart-define-from-file).
   static Future<ZehnIntelligence> init({
     String? appName,
+    String configPath = 'lib/config/zehn-intelligence.prod.json',
     FutureOr<void> Function(BuildContext, dynamic)? onOpenRoute,
   }) async {
-    const key = String.fromEnvironment(
-      'zi_app_key',
-      defaultValue: String.fromEnvironment('ZEHN_API_KEY'),
-    );
-    const console = String.fromEnvironment(
-      'zi_console_url',
-      defaultValue: String.fromEnvironment('ZEHN_INTELLIGENCE_CONFIG_URL'),
-    );
-    const appId = String.fromEnvironment('zi_app_id');
-    const proxyStr = String.fromEnvironment('ZEHN_PROXY');
+    WidgetsFlutterBinding.ensureInitialized();
+    Map<String, dynamic>? config;
+
+    for (final path in [
+      configPath,
+      'config/zehn-intelligence.prod.json',
+      'assets/config/zehn-intelligence.prod.json',
+    ]) {
+      try {
+        final text = await rootBundle.loadString(path);
+        if (text.trim().isNotEmpty) {
+          config = jsonDecode(text) as Map<String, dynamic>?;
+          if (config != null) break;
+        }
+      } catch (_) {}
+    }
+
+    if (config == null) {
+      for (final path in [
+        configPath,
+        'config/zehn-intelligence.prod.json',
+      ]) {
+        try {
+          final file = File(path);
+          if (file.existsSync()) {
+            final text = file.readAsStringSync();
+            if (text.trim().isNotEmpty) {
+              config = jsonDecode(text) as Map<String, dynamic>?;
+              if (config != null) break;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    final key = config?['zi_app_key'] as String? ??
+        config?['ZEHN_API_KEY'] as String? ??
+        const String.fromEnvironment(
+          'zi_app_key',
+          defaultValue: String.fromEnvironment('ZEHN_API_KEY'),
+        );
+
+    final console = config?['zi_console_url'] as String? ??
+        config?['ZEHN_INTELLIGENCE_CONFIG_URL'] as String? ??
+        const String.fromEnvironment(
+          'zi_console_url',
+          defaultValue: String.fromEnvironment('ZEHN_INTELLIGENCE_CONFIG_URL'),
+        );
+
+    final appId = config?['zi_app_id'] as String? ??
+        const String.fromEnvironment('zi_app_id');
+
+    final proxyStr = config?['proxy'] as String? ??
+        const String.fromEnvironment('ZEHN_PROXY');
 
     return await start(
-      appName: appName ?? 'App',
+      appName: appName ?? config?['zi_package_name'] as String? ?? 'App',
       apiKey: key,
       configUrl: console.isNotEmpty ? Uri.tryParse(console) : null,
       configKey: key,
