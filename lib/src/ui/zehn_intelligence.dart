@@ -110,8 +110,18 @@ class ZehnIntelligence {
     // Stored for user context
   }
 
+  /// Sets the user token for the assistant.
+  static void setUser(dynamic token, {FutureOr<dynamic> Function()? onTokenExpired}) {
+    // Stored for user context
+  }
+
   /// Informs the assistant that the user has signed out.
   static void signedOut() {
+    instance?.clearUserData();
+  }
+
+  /// Clears the user token from the assistant.
+  static void clearUser() {
     instance?.clearUserData();
   }
 
