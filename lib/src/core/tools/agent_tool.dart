@@ -178,7 +178,7 @@ class AgentTool {
   final ToolFallback fallback;
   final ToolDoc? doc;
 
-  static final RegExp _namePattern = RegExp(r'^[a-z]+(\.[a-zA-Z]+)+$');
+  static final RegExp _namePattern = RegExp(r'^[a-z0-9_]+(\.[a-zA-Z0-9_]+)+$');
 
   bool get isRead => kind == ToolKind.read;
   bool get requiresConfirmation => kind == ToolKind.remoteWrite;

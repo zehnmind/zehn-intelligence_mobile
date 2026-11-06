@@ -50,11 +50,6 @@ class ZehnAiButton extends StatelessWidget {
     if (!ZehnIntelligence.isInitialized) {
       return const SizedBox.shrink();
     }
-    return AgentButton(
-      label: label,
-      icon: icon,
-      title: title,
-      mini: mini,
-    );
+    return AgentButton(label: label, icon: icon, title: title, mini: mini);
   }
 }
