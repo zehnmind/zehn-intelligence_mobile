@@ -168,14 +168,24 @@ class ZehnIntelligence {
     String? appName,
     FutureOr<void> Function(BuildContext, dynamic)? onOpenRoute,
   }) async {
-    final target = configTarget();
-    final hasKey = _configKeyOverride.isNotEmpty ||
-        const String.fromEnvironment('ZEHN_API_KEY').isNotEmpty;
-    if (target == null && !hasKey) {
-      throw const ZiConfigException('No Zehn Intelligence configuration found.');
-    }
+    const key = String.fromEnvironment(
+      'zi_app_key',
+      defaultValue: String.fromEnvironment('ZEHN_API_KEY'),
+    );
+    const console = String.fromEnvironment(
+      'zi_console_url',
+      defaultValue: String.fromEnvironment('ZEHN_INTELLIGENCE_CONFIG_URL'),
+    );
+    const appId = String.fromEnvironment('zi_app_id');
+    const proxyStr = String.fromEnvironment('ZEHN_PROXY');
+
     return await start(
       appName: appName ?? 'App',
+      apiKey: key,
+      configUrl: console.isNotEmpty ? Uri.tryParse(console) : null,
+      configKey: key,
+      agentId: appId.isNotEmpty ? appId : null,
+      proxy: proxyStr.isNotEmpty ? Uri.tryParse(proxyStr) : null,
     );
   }
 
