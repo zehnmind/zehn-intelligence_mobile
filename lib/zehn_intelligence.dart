@@ -58,6 +58,7 @@ export 'src/ui/widgets/agent_message_list.dart';
 export 'src/ui/widgets/agent_text_block.dart';
 export 'src/ui/widgets/agent_voice_replies.dart';
 export 'src/ui/zehn_intelligence.dart';
+export 'src/ui/zehn_integrator.dart';
 export 'src/version.dart';
 export 'src/voice/voice_input_cubit.dart';
 export 'src/voice/voice_recorder.dart';

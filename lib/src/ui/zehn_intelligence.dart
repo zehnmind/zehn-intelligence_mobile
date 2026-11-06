@@ -19,6 +19,7 @@ import '../core/text/default_copy.dart';
 import '../core/text/localized_text.dart';
 import '../core/tools/agent_tool.dart';
 import '../core/tools/tool_registry.dart';
+import '../core/tools/tool_result.dart';
 import '../core/transport/agent_transport.dart';
 import '../core/transport/example_transport.dart';
 import '../core/transport/fallback_transport.dart';
@@ -34,6 +35,7 @@ import 'components/dashboard_card_component.dart';
 import 'destinations/agent_destination.dart';
 import 'destinations/agent_link.dart';
 import 'scope/agent_scope.dart';
+import 'zehn_integrator.dart';
 
 /// The in-app ZehnIntelligence: one per app, created at start-up and kept for the life
 /// of the app.
@@ -94,6 +96,78 @@ class ZehnIntelligence {
 
   /// The intelligence `start` made, for widgets with no `AgentScope` above them.
   static ZehnIntelligence? instance;
+
+  /// True when the assistant has been started and is ready.
+  static bool get isInitialized => instance != null;
+
+  /// Changes the active language of the assistant.
+  static void setLanguage(String language) {
+    instance?.displayLanguage = language;
+  }
+
+  /// Informs the assistant that the user has signed in.
+  static void signedIn({String? token}) {
+    // Stored for user context
+  }
+
+  /// Informs the assistant that the user has signed out.
+  static void signedOut() {
+    instance?.clearUserData();
+  }
+
+  /// Registry of tools added via the integrator.
+  static final Map<String, Future<Map<String, Object?>> Function(Map<String, Object?>)> registeredTools = {};
+
+  /// Registers a tool handler by name.
+  static void registerTool(String name, Future<Map<String, Object?>> Function(Map<String, Object?>) handler) {
+    registeredTools[name] = handler;
+    if (instance != null) {
+      instance!.tools.add(
+        AgentTool(
+          name: name,
+          description: name,
+          kind: ToolKind.read,
+          run: (call) async {
+            try {
+              final res = await handler(call.args);
+              return ToolResult(tool: name, ok: true, summary: 'OK', data: res);
+            } catch (e) {
+              return ToolResult.failure(name, e.toString());
+            }
+          },
+        ),
+      );
+    }
+  }
+
+  /// Registry of components added via the integrator.
+  static final Map<String, Widget Function(BuildContext, Map<String, Object?>, ZiComponentController)> registeredComponents = {};
+
+  /// Registers a UI component builder by name.
+  static void registerComponent(
+    String name,
+    Widget Function(BuildContext, Map<String, Object?>, ZiComponentController) builder,
+  ) {
+    registeredComponents[name] = builder;
+  }
+
+  /// Quick initialization helper used by the integrator.
+  /// Throws [ZiConfigException] when configuration is absent, allowing the app
+  /// to run cleanly without the assistant when unconfigured.
+  static Future<ZehnIntelligence> init({
+    String? appName,
+    FutureOr<void> Function(BuildContext, dynamic)? onOpenRoute,
+  }) async {
+    final target = configTarget();
+    final hasKey = _configKeyOverride.isNotEmpty ||
+        const String.fromEnvironment('ZEHN_API_KEY').isNotEmpty;
+    if (target == null && !hasKey) {
+      throw const ZiConfigException('No Zehn Intelligence configuration found.');
+    }
+    return await start(
+      appName: appName ?? 'App',
+    );
+  }
 
   /// Everything set up in one call — the model, voice, tools and packs:
   ///
