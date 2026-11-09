@@ -3,10 +3,16 @@
 //
 //   dart run zehn_intelligence:mock_server [--port 8787]
 //
-// Console side: GET /v1/bootstrap, POST /v1/installs, POST /v1/turns,
-// POST /v1/turns/{id}/tool-results, GET /v1/suggestions. Customer side, under
-// /customer: GET /cinematica/ (public) and GET /loyalty/cards/my (needs
-// `Authorization: Bearer demo`). Every request is logged as one line.
+// Console side: POST /v1/installs, POST /v1/turns,
+// POST /v1/turns/{id}/tool-results, GET /v1/suggestions (with the chat
+// settings). Customer side, under /customer: GET /cinematica/ (public) and
+// GET /loyalty/cards/my (needs `Authorization: Bearer demo`). Every request is
+// logged as one line.
+//
+// Like the real backend, it builds each tool call's customer request
+// (`client_api_request.http`) and sends each card's template with the card
+// (`mount_component.surface`), from an app description: the built-in one, or
+// `--app <file.json>` with a real app's endpoints, cards and theme.
 //
 // Ask about the cinema ("kino", "cinema", "кино") for a tool call and a
 // console-made card; about "card"/"karta"/"карта" for a login-only tool;
@@ -16,9 +22,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-/// `--bootstrap <file.json>` serves that start-up data instead of the
-/// built-in one, e.g. a real app's endpoints for trying it against its API.
-Map<String, Object?>? _bootstrapFile;
+/// What the console knows about the app: `api` (base_url, auth, headers),
+/// `tools`, `components`, `theme`, `copy`, `services`, `languages`,
+/// `default_language`, `spec_version`.
+late Map<String, Object?> _app;
 
 Future<void> main(List<String> args) async {
   String? arg(String name) {
@@ -27,11 +34,10 @@ Future<void> main(List<String> args) async {
   }
 
   final port = int.parse(arg('--port') ?? '8787');
-  final file = arg('--bootstrap');
-  if (file != null) {
-    _bootstrapFile = (jsonDecode(File(file).readAsStringSync()) as Map).cast<String, Object?>();
-    stdout.writeln('start-up data from $file');
-  }
+  // --bootstrap is the old name of --app.
+  final file = arg('--app') ?? arg('--bootstrap');
+  _app = file != null ? (jsonDecode(File(file).readAsStringSync()) as Map).cast<String, Object?>() : _builtInApp(port);
+  if (file != null) stdout.writeln('app description from $file');
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
   stdout.writeln('mock server on http://localhost:$port');
   await for (final req in server) {
@@ -57,12 +63,11 @@ Future<void> _handle(HttpRequest req, int port) async {
   final json = body.isEmpty ? null : jsonDecode(body);
   var status = 200;
   try {
-    if (req.method == 'GET' && path == '/v1/bootstrap') {
-      await _json(req, 200, _bootstrapFile ?? _bootstrap(port));
-    } else if (req.method == 'POST' && path == '/v1/installs') {
+    if (req.method == 'POST' && path == '/v1/installs') {
       await _json(req, 200, {'token': 'install-token', 'token_type': 'Bearer', 'expires_in': 3600});
     } else if (req.method == 'GET' && path == '/v1/suggestions') {
-      await _json(req, 200, {'suggestions': _starters[req.uri.queryParameters['language']] ?? _starters['en']});
+      final language = req.uri.queryParameters['language'] ?? 'en';
+      await _json(req, 200, {'suggestions': _starters[language] ?? _starters['en'], 'chat': _chat(language)});
     } else if (req.method == 'POST' && path == '/v1/turns') {
       if (!_signedIn(req)) {
         status = 401;
@@ -140,7 +145,7 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
     await _sse(req, turnId, [
       started,
       ('text.delta', {'text': _w(language, 'Sodiqlik sahifasini ochyapman.', 'Открываю раздел лояльности.', 'Opening the loyalty page.')}),
-      ('mount_component', {'call_id': 'm_1', 'component': 'loyalty_page', 'kind': 'route', 'props': <String, Object?>{}}),
+      ('mount_component', _mount('m_1', 'loyalty_page', const {})),
       ('done', {'outcome': 'answered'}),
     ]);
     return;
@@ -161,7 +166,7 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
     started,
     ...transcript,
     ('text.delta', {'text': _w(language, 'Bir daqiqa… ', 'Минутку… ', 'One moment… ')}),
-    ('client_api_request', {'call_id': 'c_1', 'tool': tool, 'args': <String, Object?>{}}),
+    ('client_api_request', {'call_id': 'c_1', 'tool': tool, 'args': <String, Object?>{}, 'http': _http(tool, const {}, language)}),
     (
       'turn.paused',
       {
@@ -211,10 +216,92 @@ Future<void> _results(HttpRequest req, String turnId, Map<String, Object?> body)
   }
   await _sse(req, turnId, [
     ('text.delta', {'text': _w(language, 'Mana **Cinematica** haqida:', 'Вот что есть о **Cinematica**:', "Here's **Cinematica**:")}),
-    ('mount_component', {'call_id': 'm_1', 'component': 'cinema_details', 'kind': 'inline', 'props': data}),
+    ('mount_component', _mount('m_1', 'cinema_details', data is Map ? data.cast<String, Object?>() : const {})),
     ('suggestions', {'items': _w3(language, ['Bugun qanday filmlar bor?', 'Kartamni ko‘rsat'], ['Какие фильмы сегодня?', 'Покажи мою карту'], ["What's on today?", 'Show my card'])}),
     ('done', {'outcome': 'answered'}),
   ]);
+}
+
+Map<String, Object?> _map(Object? v) => v is Map ? v.cast<String, Object?>() : const {};
+
+/// A `{language: text}` map, or plain text, in [language].
+String? _pick(Object? v, String language) {
+  if (v is String) return v;
+  if (v is! Map) return null;
+  final text = v[language] ?? v['en'] ?? (v.values.isEmpty ? null : v.values.first);
+  return text is String ? text : null;
+}
+
+/// The customer request for one call, as the backend builds it: path
+/// parameters filled, query, headers, body, login and result rule.
+Map<String, Object?> _http(String tool, Map<String, Object?> args, String language) {
+  final api = _map(_app['api']);
+  final spec = _map(_map(_app['tools'])[tool]);
+  var path = spec['path'] as String? ?? '/';
+  final query = <String, Object?>{};
+  final body = <String, Object?>{};
+  for (final p in spec['params'] is List ? spec['params'] as List : const []) {
+    final param = _map(p);
+    final name = param['name'] as String?;
+    final value = args[name];
+    if (name == null || value == null) continue;
+    final key = param['key'] as String? ?? name;
+    switch (param['in']) {
+      case 'path':
+        path = path.replaceAll('{$name}', Uri.encodeComponent('$value'));
+      case 'query':
+        query[key] = value;
+      case 'body':
+        body[key] = value;
+    }
+  }
+  final headers = {
+    for (final e in {..._map(api['headers']), ..._map(spec['headers'])}.entries) e.key: '${e.value}'.replaceAll('{language}', language),
+  };
+  final auth = _map(api['auth']);
+  final confirm = spec['confirm'];
+  final title = confirm is Map ? _pick(confirm['title'], language) : null;
+  return {
+    'method': spec['method'] ?? 'GET',
+    'path': path,
+    if (query.isNotEmpty) 'query': query,
+    if (headers.isNotEmpty) 'headers': headers,
+    if (body.isNotEmpty) 'body': body,
+    'auth': spec['auth'] == true,
+    'auth_header': ?auth['header'],
+    'auth_scheme': ?auth['scheme'],
+    'result': ?spec['result'],
+    if (confirm is bool) 'confirm': confirm,
+    if (confirm is Map) 'confirm': {'title': ?title?.replaceAllMapped(RegExp(r'\{(\w+)\}'), (m) => '${args[m[1]] ?? ''}')},
+    'base_url': ?api['base_url'],
+  };
+}
+
+/// A card or route with what the phone needs to show it.
+Map<String, Object?> _mount(String callId, String component, Map<String, Object?> props) {
+  final def = _map(_map(_app['components'])[component]);
+  return {
+    'call_id': callId,
+    'component': component,
+    'kind': def['kind'] ?? 'inline',
+    'props': props,
+    'surface': ?def['surface'],
+    'route': ?def['route'],
+  };
+}
+
+/// The `chat` field of `GET /v1/suggestions`.
+Map<String, Object?> _chat(String language) {
+  final copy = _map(_app['copy']);
+  return {
+    'services': ?_app['services'],
+    'languages': ?_app['languages'],
+    'default_language': ?_app['default_language'],
+    'theme': ?_app['theme'],
+    'welcome_title': ?_pick(copy['welcome_title'], language),
+    'welcome_subtitle': ?_pick(copy['welcome_subtitle'], language),
+    'spec_version': ?_app['spec_version'],
+  };
 }
 
 String _w(String language, String uz, String ru, String en) => switch (language) {
@@ -235,16 +322,13 @@ const _starters = {
   'en': ['Tell me about the cinema', 'How many points are on my card?', 'Open loyalty'],
 };
 
-Map<String, Object?> _bootstrap(int port) => {
-  'format': 1,
+Map<String, Object?> _builtInApp(int port) => {
   'spec_version': '1.0.3',
-  'track': 'test',
   'services': ['llm', 'stt', 'tts'],
   'languages': ['uz', 'ru', 'en'],
   'default_language': 'uz',
   'api': {
     'base_url': 'http://localhost:$port/customer',
-    'allowed_hosts': ['localhost'],
     'auth': {'header': 'Authorization', 'scheme': 'Bearer'},
     'headers': {'Accept-Language': '{language}'},
   },

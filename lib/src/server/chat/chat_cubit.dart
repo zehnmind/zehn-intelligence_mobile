@@ -5,7 +5,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../api/turn_client.dart';
 import '../api/turn_events.dart';
-import '../bootstrap/bootstrap.dart';
 import '../proxy/tool_runner.dart';
 import 'audio_queue.dart';
 import 'chat_state.dart';
@@ -277,7 +276,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       'route' => ZiComponentKind.route,
       _ => ZiComponentKind.inline,
     };
-    final item = ZiComponentItem(event.callId, event.component, kind, event.props);
+    final item = ZiComponentItem(event.callId, event.component, kind, event.props, surface: event.surface, route: event.route);
     if (kind == ZiComponentKind.inline) {
       _emit(state.copyWith(items: [...state.items, item]));
     } else if (!_opens.isClosed) {

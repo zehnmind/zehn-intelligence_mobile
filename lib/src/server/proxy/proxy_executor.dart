@@ -4,8 +4,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../../ui/zehn_integrator.dart' show ZiToolError;
-import '../bootstrap/bootstrap.dart';
-import 'request_builder.dart';
+import 'http_call.dart';
 import 'result_trimmer.dart';
 
 /// Calls the customer's API for a tool, as the signed-in user.
@@ -42,21 +41,20 @@ class ZiProxyExecutor {
   static const _loopback = {'localhost', '127.0.0.1', '::1', '[::1]'};
 
   /// The trimmed JSON answer. Throws [ZiToolError] the model can read.
-  Future<Object?> call(ZiHttpTool tool, Map<String, Object?> args, ZiBootstrap boot, ZiRequestContext ctx) async {
-    final request = buildRequest(tool, args, boot.api, ctx);
+  Future<Object?> call(ZiHttpCall http) async {
     // A login-only call for a signed-out user is never made: through the
     // app's own client it could set off the app's sign-out (as TCM's
     // refresh interceptor does on a 401 it cannot refresh).
     final signedIn = _isSignedIn;
-    if (tool.auth && signedIn != null && !await signedIn()) {
+    if (http.auth && signedIn != null && !await signedIn()) {
       throw const ZiToolError('not_signed_in', 'Ask the user to sign in.');
     }
     final app = _appClient;
     final Response<Object?> response;
     if (app != null) {
-      response = await _send(app, request.path, request, const {}, appDefaults: true);
+      response = await _send(app, http.path, http, const {}, appDefaults: true);
     } else {
-      response = await _callbacks(tool, request, boot);
+      response = await _callbacks(http);
     }
     final status = response.statusCode ?? 0;
     if (status == 401) {
@@ -65,38 +63,32 @@ class ZiProxyExecutor {
     if (status < 200 || status >= 300) {
       throw ZiToolError('http_error', 'The app API answered $status.');
     }
-    return trimResult(_json(response.data), tool.result);
+    return trimResult(_json(response.data), http.result);
   }
 
-  Future<Response<Object?>> _callbacks(ZiHttpTool tool, ZiHttpRequest request, ZiBootstrap boot) async {
-    final api = boot.api;
-    final base = _baseUrlOverride ?? api.baseUrl;
+  Future<Response<Object?>> _callbacks(ZiHttpCall http) async {
+    final base = _baseUrlOverride ?? http.baseUrl;
     if (base == null) {
       throw const ZiToolError('host_not_allowed', 'No base URL is set for the app API.');
     }
-    // The user's token never goes over plain HTTP because of console data,
-    // except to this machine or in the test track. (An app's own
-    // apiBaseUrl is its own call.)
-    if (_baseUrlOverride == null && base.scheme == 'http' && boot.track != 'test' && !_loopback.contains(base.host)) {
+    // The user's token never goes over plain HTTP because of server data,
+    // except to this machine. (An app's own apiBaseUrl is its own call.)
+    if (_baseUrlOverride == null && base.scheme != 'https' && !_loopback.contains(base.host)) {
       throw ZiToolError('host_not_allowed', 'The app API at ${base.host} is not HTTPS.');
     }
-    final url = '${base.toString().replaceAll(RegExp(r'/+$'), '')}${request.path}';
-    final host = Uri.parse(url).host;
-    if (host != base.host && !api.allowedHosts.contains(host)) {
-      throw ZiToolError('host_not_allowed', 'The host $host is not allowed.');
-    }
+    final url = '${base.toString().replaceAll(RegExp(r'/+$'), '')}${http.path}';
     var token = await _accessToken?.call();
-    if (tool.auth && (token == null || token.isEmpty)) {
+    if (http.auth && (token == null || token.isEmpty)) {
       throw const ZiToolError('not_signed_in', 'Ask the user to sign in.');
     }
     Map<String, String> login(String? t) =>
-        t == null || t.isEmpty ? const {} : {api.authHeader: '${api.authScheme} $t'.trim()};
+        t == null || t.isEmpty ? const {} : {http.authHeader: '${http.authScheme} $t'.trim()};
 
-    var response = await _send(_own, url, request, login(token));
+    var response = await _send(_own, url, http, login(token));
     if (response.statusCode == 401 && _onUnauthorized != null) {
       if (await _onUnauthorized()) {
         token = await _accessToken?.call();
-        response = await _send(_own, url, request, login(token));
+        response = await _send(_own, url, http, login(token));
       }
     }
     return response;
@@ -105,7 +97,7 @@ class ZiProxyExecutor {
   Future<Response<Object?>> _send(
     Dio dio,
     String url,
-    ZiHttpRequest request,
+    ZiHttpCall http,
     Map<String, String> login, {
     bool appDefaults = false,
   }) async {
@@ -113,13 +105,13 @@ class ZiProxyExecutor {
       return await dio
           .request<Object?>(
             url,
-            data: request.body == null ? null : jsonEncode(request.body),
-            queryParameters: request.query.isEmpty ? null : request.query,
+            data: http.body == null ? null : jsonEncode(http.body),
+            queryParameters: http.query.isEmpty ? null : http.query,
             options: Options(
-              method: request.method,
+              method: http.method,
               headers: {
-                ...request.headers,
-                if (request.body != null) 'Content-Type': 'application/json',
+                ...http.headers,
+                if (http.body != null) 'Content-Type': 'application/json',
                 ...login,
               },
               // The app's own client keeps its validateStatus, so its

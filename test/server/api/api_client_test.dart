@@ -41,8 +41,8 @@ void main() {
   });
 
   test('omits spec and auth headers when unknown', () async {
-    server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 200, {}));
-    await api.getJson('/v1/bootstrap');
+    server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 200, {}));
+    await api.getJson('/v1/suggestions');
     final h = server.requests.single.headers;
     expect(h.containsKey('authorization'), isFalse);
     expect(h.containsKey('x-zi-spec-version'), isFalse);
@@ -77,16 +77,16 @@ void main() {
   });
 
   test('unknown 5xx is retryable', () async {
-    server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 503, {'message': 'busy'}));
-    final e = await failure(api.getJson('/v1/bootstrap'));
+    server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 503, {'message': 'busy'}));
+    final e = await failure(api.getJson('/v1/suggestions'));
     expect(e.code, 'internal_error');
     expect(e.status, 503);
     expect(e.retryable, isTrue);
   });
 
   test('non-JSON 502 is server_unavailable', () async {
-    server.on('GET', '/v1/bootstrap', (req, _) => respondText(req, 502, '<html>Bad gateway</html>'));
-    final e = await failure(api.getJson('/v1/bootstrap'));
+    server.on('GET', '/v1/suggestions', (req, _) => respondText(req, 502, '<html>Bad gateway</html>'));
+    final e = await failure(api.getJson('/v1/suggestions'));
     expect(e.code, 'server_unavailable');
     expect(e.retryable, isTrue);
   });
@@ -95,7 +95,7 @@ void main() {
     final url = server.url;
     await server.close();
     final dead = ZiApiClient(baseUrl: url, info: info);
-    final e = await failure(dead.getJson('/v1/bootstrap'));
+    final e = await failure(dead.getJson('/v1/suggestions'));
     expect(e.code, 'network_error');
     expect(e.status, isNull);
     expect(e.retryable, isTrue);
@@ -123,9 +123,9 @@ void main() {
   });
 
   test('a console URL with a path prefix keeps it', () async {
-    server.on('GET', '/api/v1/bootstrap', (req, _) => respondJson(req, 200, {}));
+    server.on('GET', '/api/v1/suggestions', (req, _) => respondJson(req, 200, {}));
     final prefixed = ZiApiClient(baseUrl: server.url.replace(path: '/api/'), info: info);
-    await prefixed.getJson('/v1/bootstrap');
-    expect(server.requests.single.path, '/api/v1/bootstrap');
+    await prefixed.getJson('/v1/suggestions');
+    expect(server.requests.single.path, '/api/v1/suggestions');
   });
 }

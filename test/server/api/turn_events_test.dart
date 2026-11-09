@@ -30,6 +30,17 @@ void main() {
     expect(e.callId, 'c_1');
     expect(e.tool, 'stores.list');
     expect(e.args, {'page': 1, 'size': 10});
+    expect(e.http, isNull);
+  });
+
+  test('client_api_request carries the customer request the server built', () {
+    final e = event('client_api_request', {
+      'call_id': 'c_1',
+      'tool': 'stores.list',
+      'args': {'page': 1},
+      'http': {'method': 'GET', 'path': '/stores', 'query': {'page': '1'}},
+    }) as ClientApiRequest;
+    expect(e.http, {'method': 'GET', 'path': '/stores', 'query': {'page': '1'}});
   });
 
   test('mount_component parses kind and props', () {
@@ -42,6 +53,26 @@ void main() {
     expect(e.component, 'cinema_details');
     expect(e.kind, 'inline');
     expect(e.props, {'id': 1});
+    expect(e.surface, isNull);
+    expect(e.route, isNull);
+  });
+
+  test('mount_component carries the card template, or the route, inline', () {
+    final card = event('mount_component', {
+      'call_id': 'm1',
+      'component': 'cinema_card',
+      'kind': 'inline',
+      'props': {'name': 'Cinematica'},
+      'surface': {'root': 'r', 'components': [{'id': 'r', 'component': 'Text', 'text': {'path': '/name'}}]},
+    }) as MountComponent;
+    expect(card.surface, {'root': 'r', 'components': [{'id': 'r', 'component': 'Text', 'text': {'path': '/name'}}]});
+    final page = event('mount_component', {
+      'component': 'loyalty_page',
+      'kind': 'route',
+      'route': '/loyalty',
+    }) as MountComponent;
+    expect(page.route, '/loyalty');
+    expect(page.surface, isNull);
   });
 
   test('turn.paused parses deadline as DateTime', () {

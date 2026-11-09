@@ -1,48 +1,61 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zehn_intelligence/src/server/bootstrap/bootstrap.dart';
+import 'package:zehn_intelligence/src/server/proxy/http_call.dart';
 import 'package:zehn_intelligence/src/server/proxy/proxy_executor.dart';
 import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiToolError;
 
-import '../../support/bootstrap_fixture.dart';
 import '../../support/fake_server.dart';
-import 'request_builder_test.dart' show ctx, toolError;
-
-const cinema = ZiHttpTool(method: 'GET', path: '/cinematica/');
-const card = ZiHttpTool(method: 'GET', path: '/loyalty/cards/my', auth: true);
+import 'http_call_test.dart' show toolError;
 
 void main() {
   late FakeServer server;
-  late ZiBootstrap boot;
 
   setUp(() async {
     server = await FakeServer.start();
-    boot = ZiBootstrap.fromJson(bootstrapJson(baseUrl: server.url.toString()));
     server.on('GET', '/cinematica/', (req, _) => respondJson(req, 200, {'id': 1, 'name': 'Cinematica'}));
   });
 
   tearDown(() => server.close());
 
-  test('callbacks mode adds Bearer and Accept-Language', () async {
+  ZiHttpCall get(String path, {bool auth = false, ZiResultRule? result, Map<String, String> query = const {}}) => ZiHttpCall(
+    method: 'GET',
+    path: path,
+    query: query,
+    headers: const {'Accept-Language': 'ru'},
+    auth: auth,
+    result: result,
+    baseUrl: server.url,
+  );
+
+  test('callbacks mode adds Bearer and the request headers', () async {
     final proxy = ZiProxyExecutor(accessToken: () => 'demo');
-    expect(await proxy.call(cinema, {}, boot, ctx), {'id': 1, 'name': 'Cinematica'});
+    expect(await proxy.call(get('/cinematica/')), {'id': 1, 'name': 'Cinematica'});
     final h = server.requests.single.headers;
     expect(h['authorization'], 'Bearer demo');
     expect(h['accept-language'], 'ru');
   });
 
-  test('result rule trims the answer', () async {
+  test('the query and the result rule are applied', () async {
     server.on('GET', '/location/venues', (req, _) => respondJson(req, 200, {
           'results': [
-            {'public_id': 'a', 'name': 'A', 'floor': '1', 'phone': 'x'},
+            {'public_id': 'a', 'name': 'A', 'phone': 'x'},
           ],
         }));
-    final proxy = ZiProxyExecutor();
-    final out = await proxy.call(boot.tools['stores.list']!, {'page': 1}, boot, ctx);
+    final out = await ZiProxyExecutor().call(get(
+      '/location/venues',
+      query: {'page': '1'},
+      result: const ZiResultRule(root: '/results', fields: ['public_id', 'name']),
+    ));
     expect(out, [
-      {'public_id': 'a', 'name': 'A', 'floor': '1'},
+      {'public_id': 'a', 'name': 'A'},
     ]);
     expect(server.requests.single.query, {'page': '1'});
+  });
+
+  test('a renamed login header is used', () async {
+    final call = ZiHttpCall(method: 'GET', path: '/cinematica/', authHeader: 'X-Token', authScheme: '', baseUrl: server.url);
+    await ZiProxyExecutor(accessToken: () => 'abc').call(call);
+    expect(server.requests.single.headers['x-token'], 'abc');
   });
 
   test('401 calls onUnauthorized once then retries', () async {
@@ -60,7 +73,7 @@ void main() {
         return true;
       },
     );
-    expect(await proxy.call(card, {}, boot, ctx), {'points': 10});
+    expect(await proxy.call(get('/loyalty/cards/my', auth: true)), {'points': 10});
     expect(refreshes, 1);
     expect(server.requests, hasLength(2));
   });
@@ -68,29 +81,44 @@ void main() {
   test('401 twice is not_signed_in', () async {
     server.on('GET', '/loyalty/cards/my', (req, _) => respondJson(req, 401, {}));
     final proxy = ZiProxyExecutor(accessToken: () => 't', onUnauthorized: () => true);
-    await expectLater(proxy.call(card, {}, boot, ctx), toolError('not_signed_in'));
+    await expectLater(proxy.call(get('/loyalty/cards/my', auth: true)), toolError('not_signed_in'));
     expect(server.requests, hasLength(2));
   });
 
-  test('auth tool without login is not_signed_in with no request', () async {
-    await expectLater(ZiProxyExecutor().call(card, {}, boot, ctx), toolError('not_signed_in'));
-    await expectLater(ZiProxyExecutor(accessToken: () => null).call(card, {}, boot, ctx), toolError('not_signed_in'));
+  test('auth call without login is not_signed_in with no request', () async {
+    await expectLater(ZiProxyExecutor().call(get('/loyalty/cards/my', auth: true)), toolError('not_signed_in'));
+    await expectLater(ZiProxyExecutor(accessToken: () => null).call(get('/loyalty/cards/my', auth: true)), toolError('not_signed_in'));
     expect(server.requests, isEmpty);
   });
 
+  test('isSignedIn false keeps an auth call from being made, even through the app client', () async {
+    final app = Dio(BaseOptions(baseUrl: server.url.toString()));
+    final proxy = ZiProxyExecutor(appClient: app, isSignedIn: () => false);
+    await expectLater(proxy.call(get('/loyalty/cards/my', auth: true)), toolError('not_signed_in'));
+    expect(server.requests, isEmpty);
+  });
+
+  test('isSignedIn does not block public calls', () async {
+    expect(await ZiProxyExecutor(isSignedIn: () => false).call(get('/cinematica/')), isNotNull);
+  });
+
   test('no base URL in callbacks mode is host_not_allowed', () async {
-    final json = bootstrapJson();
-    (json['api']! as Map).remove('base_url');
     await expectLater(
-      ZiProxyExecutor().call(cinema, {}, ZiBootstrap.fromJson(json), ctx),
+      ZiProxyExecutor().call(const ZiHttpCall(method: 'GET', path: '/cinematica/')),
       toolError('host_not_allowed'),
     );
   });
 
-  test('baseUrlOverride wins over the console base URL', () async {
-    final json = bootstrapJson(baseUrl: 'https://not-used.example');
-    final proxy = ZiProxyExecutor(baseUrlOverride: server.url);
-    expect(await proxy.call(cinema, {}, ZiBootstrap.fromJson(json), ctx), isNotNull);
+  test('the app apiBaseUrl wins over the server base URL', () async {
+    final call = ZiHttpCall(method: 'GET', path: '/cinematica/', baseUrl: Uri.parse('https://not-used.example'));
+    expect(await ZiProxyExecutor(baseUrlOverride: server.url).call(call), isNotNull);
+  });
+
+  test('a plain http base URL from the server is refused unless it is this machine', () async {
+    final remote = ZiHttpCall(method: 'GET', path: '/x', baseUrl: Uri.parse('http://api.example.invalid'));
+    await expectLater(ZiProxyExecutor().call(remote), toolError('host_not_allowed'));
+    // server.url is http://127.0.0.1, which is allowed.
+    expect(await ZiProxyExecutor().call(get('/cinematica/')), isNotNull);
   });
 
   test('client mode uses the app Dio base URL and adds no auth header', () async {
@@ -99,8 +127,8 @@ void main() {
         o.headers['X-From-App'] = 'yes';
         h.next(o);
       }));
-    final proxy = ZiProxyExecutor(appClient: app, accessToken: () => 'ignored');
-    expect(await proxy.call(cinema, {}, boot, ctx), {'id': 1, 'name': 'Cinematica'});
+    const call = ZiHttpCall(method: 'GET', path: '/cinematica/', headers: {'Accept-Language': 'ru'});
+    expect(await ZiProxyExecutor(appClient: app, accessToken: () => 'ignored').call(call), {'id': 1, 'name': 'Cinematica'});
     final h = server.requests.single.headers;
     expect(h['x-from-app'], 'yes');
     expect(h.containsKey('authorization'), isFalse);
@@ -115,89 +143,17 @@ void main() {
         if (e.response?.statusCode == 401) seen++;
         h.next(e);
       }));
-    final proxy = ZiProxyExecutor(appClient: app);
-    await expectLater(proxy.call(card, {}, boot, ctx), toolError('not_signed_in'));
-    expect(seen, 1);
-    expect(server.requests, hasLength(1));
-  });
-
-  test('non-JSON body becomes handler_failed', () async {
-    server.on('GET', '/cinematica/', (req, _) => respondText(req, 200, '<html>maintenance</html>'));
-    await expectLater(ZiProxyExecutor().call(cinema, {}, boot, ctx), toolError('handler_failed'));
-  });
-
-  test('empty body is null', () async {
-    server.on('GET', '/cinematica/', (req, _) => respondText(req, 200, '', type: 'application/json'));
-    expect(await ZiProxyExecutor().call(cinema, {}, boot, ctx), isNull);
-  });
-
-  test('500 is http_error with status in message', () async {
-    server.on('GET', '/cinematica/', (req, _) => respondText(req, 500, 'boom'));
     await expectLater(
-      ZiProxyExecutor().call(cinema, {}, boot, ctx),
-      throwsA(isA<ZiToolError>().having((e) => e.code, 'code', 'http_error').having((e) => e.message, 'message', contains('500'))),
+      ZiProxyExecutor(appClient: app).call(const ZiHttpCall(method: 'GET', path: '/loyalty/cards/my', auth: true)),
+      toolError('not_signed_in'),
     );
+    expect(seen, 1);
   });
-
-  test('slow answer is timeout', () async {
-    server.on('GET', '/cinematica/', (req, _) async {
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-      await respondJson(req, 200, {});
-    });
-    final proxy = ZiProxyExecutor(timeout: const Duration(milliseconds: 100));
-    await expectLater(proxy.call(cinema, {}, boot, ctx), toolError('timeout'));
-  });
-
-  test('closed server is network_error', () async {
-    final url = server.url.toString();
-    await server.close();
-    final dead = ZiBootstrap.fromJson(bootstrapJson(baseUrl: url));
-    await expectLater(ZiProxyExecutor().call(cinema, {}, dead, ctx), toolError('network_error'));
-  });
-
-  test('plain http base URL is refused outside the test track', () async {
-    final json = bootstrapJson(baseUrl: 'http://api.example.invalid');
-    await expectLater(ZiProxyExecutor().call(cinema, {}, ZiBootstrap.fromJson(json), ctx), toolError('host_not_allowed'));
-  });
-
-  test('plain http base URL is allowed in the test track', () async {
-    final json = {...bootstrapJson(baseUrl: 'http://api.example.invalid'), 'track': 'test'};
-    await expectLater(ZiProxyExecutor().call(cinema, {}, ZiBootstrap.fromJson(json), ctx), toolError('network_error'));
-  });
-
-  test('track is parsed', () {
-    expect(ZiBootstrap.fromJson({...bootstrapJson(), 'track': 'test'}).track, 'test');
-  });
-
-  test('an auth tool is not called when isSignedIn is false, even through the app client', () async {
-    server.on('GET', '/loyalty/cards/my', (req, _) => respondJson(req, 401, {}));
-    final app = Dio(BaseOptions(baseUrl: server.url.toString()));
-    final proxy = ZiProxyExecutor(appClient: app, isSignedIn: () => false);
-    await expectLater(proxy.call(card, {}, boot, ctx), toolError('not_signed_in'));
-    expect(server.requests, isEmpty);
-  });
-
-  test('isSignedIn true lets an auth tool through', () async {
-    server.on('GET', '/loyalty/cards/my', (req, _) => respondJson(req, 200, {'points': 3}));
-    final app = Dio(BaseOptions(baseUrl: server.url.toString()));
-    final proxy = ZiProxyExecutor(appClient: app, isSignedIn: () async => true);
-    expect(await proxy.call(card, {}, boot, ctx), {'points': 3});
-  });
-
-  test('isSignedIn does not block public tools', () async {
-    final proxy = ZiProxyExecutor(isSignedIn: () => false);
-    expect(await proxy.call(cinema, {}, boot, ctx), {'id': 1, 'name': 'Cinematica'});
-  });
-
-  const reserve = ZiHttpTool(
-    method: 'POST',
-    path: '/parking/reservations',
-    params: [ZiParam(name: 'zone_id', location: ZiParamIn.body), ZiParam(name: 'hours', location: ZiParamIn.body)],
-  );
 
   test('POST sends the JSON body with its content type', () async {
     server.on('POST', '/parking/reservations', (req, _) => respondJson(req, 201, {'id': 'r1'}));
-    expect(await ZiProxyExecutor().call(reserve, {'zone_id': 7, 'hours': 2}, boot, ctx), {'id': 'r1'});
+    final call = ZiHttpCall(method: 'POST', path: '/parking/reservations', body: const {'zone_id': 7, 'hours': 2}, baseUrl: server.url);
+    expect(await ZiProxyExecutor().call(call), {'id': 'r1'});
     final rec = server.requests.single;
     expect(rec.method, 'POST');
     expect(rec.json, {'zone_id': 7, 'hours': 2});
@@ -207,17 +163,45 @@ void main() {
   test('the app client sends the body too', () async {
     server.on('POST', '/parking/reservations', (req, _) => respondJson(req, 200, {'ok': true}));
     final proxy = ZiProxyExecutor(appClient: Dio(BaseOptions(baseUrl: server.url.toString())));
-    await proxy.call(reserve, {'zone_id': 3}, boot, ctx);
+    await proxy.call(const ZiHttpCall(method: 'POST', path: '/parking/reservations', body: {'zone_id': 3}));
     expect(server.requests.single.json, {'zone_id': 3});
   });
 
   test('a 204 with no body is null', () async {
-    const cancel = ZiHttpTool(method: 'DELETE', path: '/r/{id}', params: [ZiParam(name: 'id', location: ZiParamIn.path)]);
     server.on('DELETE', '/r/x9', (req, _) async {
       req.response.statusCode = 204;
       await req.response.close();
     });
-    expect(await ZiProxyExecutor().call(cancel, {'id': 'x9'}, boot, ctx), isNull);
-    expect(server.requests.single.method, 'DELETE');
+    expect(await ZiProxyExecutor().call(ZiHttpCall(method: 'DELETE', path: '/r/x9', baseUrl: server.url)), isNull);
+  });
+
+  test('non-JSON body becomes handler_failed', () async {
+    server.on('GET', '/cinematica/', (req, _) => respondText(req, 200, '<html>maintenance</html>'));
+    await expectLater(ZiProxyExecutor().call(get('/cinematica/')), toolError('handler_failed'));
+  });
+
+  test('500 is http_error with status in message', () async {
+    server.on('GET', '/cinematica/', (req, _) => respondText(req, 500, 'boom'));
+    await expectLater(
+      ZiProxyExecutor().call(get('/cinematica/')),
+      throwsA(isA<ZiToolError>().having((e) => e.code, 'code', 'http_error').having((e) => e.message, 'message', contains('500'))),
+    );
+  });
+
+  test('slow answer is timeout', () async {
+    server.on('GET', '/cinematica/', (req, _) async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await respondJson(req, 200, {});
+    });
+    await expectLater(
+      ZiProxyExecutor(timeout: const Duration(milliseconds: 100)).call(get('/cinematica/')),
+      toolError('timeout'),
+    );
+  });
+
+  test('closed server is network_error', () async {
+    final call = get('/cinematica/');
+    await server.close();
+    await expectLater(ZiProxyExecutor().call(call), toolError('network_error'));
   });
 }

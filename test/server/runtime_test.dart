@@ -8,7 +8,6 @@ import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
 import 'package:zehn_intelligence/src/server/runtime.dart';
 import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiConfigException;
 
-import '../support/bootstrap_fixture.dart';
 import '../support/fake_server.dart';
 import '../support/test_info.dart';
 
@@ -79,33 +78,51 @@ void main() {
     );
 
     test('create with userToken uses CallbackTokenSource, without it InstallTokenSource', () async {
-      server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 200, bootstrapJson()));
       expect((await create(userToken: () => 'u')).tokens, isA<CallbackTokenSource>());
       expect((await create()).tokens, isA<InstallTokenSource>());
     });
 
-    test('create does not wait for the network', () async {
-      server.on('GET', '/v1/bootstrap', (req, _) async {
-        await Future<void>.delayed(const Duration(seconds: 2));
-        await respondJson(req, 200, bootstrapJson());
-      });
-      final sw = Stopwatch()..start();
+    test('create makes no network call', () async {
       final runtime = await create();
-      expect(sw.elapsedMilliseconds, lessThan(500));
+      expect(server.requests, isEmpty);
       expect(runtime.api.specVersion, '1.0.0');
+      expect(runtime.settings.value.services, isEmpty);
     });
 
-    test('cached start-up data sets the language when the device one is not offered', () async {
-      server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 500, {}));
-      await store.write('bootstrap', {...bootstrapJson(), 'languages': ['uz', 'xx'], 'default_language': 'uz'});
-      final runtime = await create();
+    test('the starter suggestions bring the chat settings', () async {
+      server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 200, {
+            'suggestions': ['Salom'],
+            'chat': {
+              'languages': ['uz', 'xx'],
+              'default_language': 'uz',
+              'services': ['llm', 'stt'],
+              'welcome_title': 'Salom!',
+              'spec_version': 'v7',
+            },
+          }));
+      final runtime = await create(userToken: () => 'u');
+      // Before the settings: the phone's language if the SDK knows it.
+      expect(runtime.language, 'en');
+      await runtime.chat.loadStarterSuggestions();
+      expect(runtime.chat.state.suggestions, ['Salom']);
+      expect(runtime.settings.value.welcomeTitle, 'Salom!');
+      expect(runtime.settings.value.speech, isTrue);
+      expect(runtime.api.specVersion, 'v7');
+      // The phone's language is not offered: the default one.
       expect(runtime.language, 'uz');
       runtime.language = 'ru';
       expect(runtime.language, 'ru');
     });
 
+    test('suggestions without chat settings keep the ones it has', () async {
+      server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 200, {'suggestions': ['Hi']}));
+      final runtime = await create(userToken: () => 'u');
+      await runtime.chat.loadStarterSuggestions();
+      expect(runtime.chat.state.suggestions, ['Hi']);
+      expect(runtime.api.specVersion, '1.0.0');
+    });
+
     test('setUserToken switches to the app token; clearUser resets the chat and goes back', () async {
-      server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 200, bootstrapJson()));
       final runtime = await create();
       runtime.setUserToken(() => 'user-1');
       expect(await runtime.tokens.token(), 'user-1');
@@ -116,10 +133,6 @@ void main() {
     });
 
     test('isSignedIn false keeps login-only tools from being called', () async {
-      server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 500, {}));
-      final json = bootstrapJson(baseUrl: server.url.toString());
-      (json['tools']! as Map)['loyalty_cards.get'] = {'method': 'GET', 'path': '/loyalty/cards/my', 'auth': true};
-      await store.write('bootstrap', json);
       final runtime = await ZiRuntime.create(
         config: ZiInitConfig(appKey: 'zi_test_abc', consoleUrl: server.url),
         info: info,
@@ -128,14 +141,18 @@ void main() {
         store: store,
       );
       final results = await runtime.tools.runAll([
-        const ClientApiRequest(callId: 'c1', tool: 'loyalty_cards.get', args: {}),
+        ClientApiRequest(callId: 'c1', tool: 'loyalty_cards.get', args: const {}, http: {
+          'method': 'GET',
+          'path': '/loyalty/cards/my',
+          'auth': true,
+          'base_url': server.url.toString(),
+        }),
       ]);
       expect(results.single.errorCode, 'not_signed_in');
-      expect(server.requests.where((r) => r.path == '/loyalty/cards/my'), isEmpty);
+      expect(server.requests, isEmpty);
     });
 
     test('the chat answers the tool runner\'s questions', () async {
-      server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 200, bootstrapJson()));
       final runtime = await create();
       expect(runtime.tools.confirmer, isNotNull);
     });

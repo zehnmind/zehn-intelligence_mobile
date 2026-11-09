@@ -10,11 +10,10 @@ import 'api/client_info.dart';
 import 'api/turn_client.dart';
 import 'auth/file_store.dart';
 import 'auth/token_source.dart';
-import 'bootstrap/bootstrap_repository.dart';
 import 'chat/audio_queue.dart';
 import 'chat/chat_cubit.dart';
+import 'chat/chat_settings.dart';
 import 'proxy/proxy_executor.dart';
-import 'proxy/request_builder.dart';
 import 'proxy/tool_runner.dart';
 import 'ui/chat_sheet.dart';
 
@@ -27,7 +26,7 @@ class ZiInitConfig {
   final String appKey;
   final Uri consoleUrl;
 
-  /// From the config file, until start-up data says otherwise.
+  /// From the config file, until the chat settings say otherwise.
   final String? specVersion;
 }
 
@@ -73,7 +72,6 @@ class ZiRuntime {
   ZiRuntime._({
     required this.api,
     required this.info,
-    required this.bootstrap,
     required ZiFileStore store,
     required this.openRoute,
     required ZiTokenSource tokens,
@@ -85,8 +83,10 @@ class ZiRuntime {
 
   final ZiApiClient api;
   final ZiClientInfo info;
-  final ZiBootstrapRepository bootstrap;
   final ZiFileStore _store;
+
+  /// From the last `GET /v1/suggestions`; the SDK's defaults until then.
+  final ValueNotifier<ZiChatSettings> settings = ValueNotifier(const ZiChatSettings());
 
   /// Set once in [create]: the cubit reads the runtime's language and tokens.
   late final ZiChatCubit chat;
@@ -118,9 +118,6 @@ class ZiRuntime {
   }) async {
     final files = store ?? ZiFileStore();
     final api = ZiApiClient(baseUrl: config.consoleUrl, info: info)..specVersion = config.specVersion;
-    final bootstrap = ZiBootstrapRepository(api: api, store: files);
-    await bootstrap.loadCached();
-    unawaited(bootstrap.refresh());
 
     if (client != null && (accessToken != null || onUnauthorized != null)) {
       debugPrint('zehn_intelligence: both client and accessToken/onUnauthorized were given; the client is used');
@@ -137,19 +134,13 @@ class ZiRuntime {
     final runtime = ZiRuntime._(
       api: api,
       info: info,
-      bootstrap: bootstrap,
       store: files,
       openRoute: openRoute,
       tokens: userToken != null ? CallbackTokenSource(userToken) : InstallTokenSource(api: api, store: files),
       builders: builders,
     );
     final turns = ZiTurnClient(api: api, tokens: () => runtime._tokens);
-    final tools = runtime._tools = ZiToolRunner(
-      handlers: handlers,
-      proxy: proxy,
-      bootstrap: bootstrap,
-      context: () => ZiRequestContext(language: runtime.language, appVersion: info.appVersion, platform: info.platform),
-    );
+    final tools = runtime._tools = ZiToolRunner(handlers: handlers, proxy: proxy);
     runtime.chat = ZiChatCubit(
       turns: turns,
       tools: tools,
@@ -163,14 +154,15 @@ class ZiRuntime {
   }
 
   /// The app's choice ([ZehnIntelligence.setLanguage]), else the phone's if
-  /// the assistant offers it, else the start-up default, else `en`.
+  /// the assistant offers it, else the assistant's default, else `en`.
   String get language {
     final chosen = _language;
-    final offered = bootstrap.current?.languages ?? const ['uz', 'ru', 'en'];
     if (chosen != null) return chosen;
+    final current = settings.value;
+    final offered = current.languages.isNotEmpty ? current.languages : const ['uz', 'ru', 'en'];
     final device = PlatformDispatcher.instance.locale.languageCode;
     if (offered.contains(device)) return device;
-    return bootstrap.current?.defaultLanguage ?? (offered.isNotEmpty ? offered.first : 'en');
+    return current.defaultLanguage ?? offered.first;
   }
 
   set language(String value) => _language = value;
@@ -189,7 +181,7 @@ class ZiRuntime {
   Future<void> openChat(BuildContext context, {String? title}) => ZiChatSheet.show(
     context,
     cubit: chat,
-    bootstrap: bootstrap,
+    settings: settings,
     language: () => language,
     builders: builders,
     openRoute: openRoute,
@@ -205,6 +197,11 @@ class ZiRuntime {
     } on ZiApiException catch (e) {
       if (e.code != 'user_token_expired' && e.code != 'user_token_required') rethrow;
       body = await get(await _tokens.refresh());
+    }
+    if (body is Map && body['chat'] is Map) {
+      final next = ZiChatSettings.fromJson(body['chat']);
+      settings.value = next;
+      if (next.specVersion != null) api.specVersion = next.specVersion;
     }
     final list = body is Map ? body['suggestions'] : null;
     return list is List ? [for (final s in list) if (s is String) s] : const [];

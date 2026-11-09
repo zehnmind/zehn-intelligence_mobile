@@ -200,17 +200,18 @@ class ZehnIntelligence {
   ///
   /// The assistant talks only to the Zehn console ([consoleUrl], default
   /// `https://zi-console-api.zehnmind.com`). Tools run as requests to the
-  /// app's own API, built from what the console publishes: through the app's
+  /// app's own API, which the server builds for each call: through the app's
   /// [client] (its base URL, auth and refresh), or with [accessToken],
-  /// [onUnauthorized] and the console's (or [apiBaseUrl]'s) base URL.
+  /// [onUnauthorized] and [apiBaseUrl] (else the request's `base_url`).
   /// [isSignedIn] keeps login-only tools from being called for a signed-out
   /// user (pass it with [client]: the app's own 401 handling may sign the
   /// user out). Pages open through [openRoute]. [userToken] is a Zehn user token from the
   /// app's backend; without one an anonymous token per install is used.
   ///
   /// [token] falls back to the config file at [configPath] and then to
-  /// `--dart-define`. Throws [ZiConfigException] when there is no app key; a
-  /// network problem never throws (the last saved start-up data is used).
+  /// `--dart-define`. Throws [ZiConfigException] when there is no app key.
+  /// It makes no network call: tool requests, cards and chat settings come
+  /// from the server during the chat.
   /// [appName] and [onOpenRoute] are accepted for older code and unused.
   static Future<void> init({
     String? token,

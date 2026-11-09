@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zehn_intelligence/src/server/bootstrap/bootstrap.dart';
+import 'package:zehn_intelligence/src/server/proxy/http_call.dart';
 import 'package:zehn_intelligence/src/server/proxy/result_trimmer.dart';
 
 void main() {

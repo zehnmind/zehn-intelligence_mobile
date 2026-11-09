@@ -1,4 +1,4 @@
-import '../bootstrap/bootstrap.dart';
+import 'http_call.dart';
 
 /// Keeps only what [rule] asks for: the JSON at `root`, at most `maxItems`
 /// of a list, and only `fields` of each object. No rule keeps everything.

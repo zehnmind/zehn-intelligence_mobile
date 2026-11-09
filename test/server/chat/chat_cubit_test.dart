@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/turn_client.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
-import 'package:zehn_intelligence/src/server/bootstrap/bootstrap.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
 import 'package:zehn_intelligence/src/server/proxy/tool_runner.dart';
@@ -102,8 +101,8 @@ void main() {
     turns.script([
       started,
       const TextDelta(text: 'Here:'),
-      const MountComponent(callId: 'm1', component: 'cinema_details', kind: 'inline', props: {'id': 1}),
-      const MountComponent(callId: 'm2', component: 'loyalty_page', kind: 'route', props: {}),
+      const MountComponent(callId: 'm1', component: 'cinema_details', kind: 'inline', props: {'id': 1}, surface: {'root': 'r'}),
+      const MountComponent(callId: 'm2', component: 'loyalty_page', kind: 'route', props: {}, route: '/loyalty'),
       const TextDelta(text: 'Anything else?'),
       done,
     ]);
@@ -112,11 +111,12 @@ void main() {
     expect(cubit.state.items, [
       const ZiUserItem('kino'),
       const ZiAssistantItem('a1', 'Here:'),
-      const ZiComponentItem('m1', 'cinema_details', ZiComponentKind.inline, {'id': 1}),
+      const ZiComponentItem('m1', 'cinema_details', ZiComponentKind.inline, {'id': 1}, surface: {'root': 'r'}),
       const ZiAssistantItem('a2', 'Anything else?'),
     ]);
     expect(opened.single.component, 'loyalty_page');
     expect(opened.single.kind, ZiComponentKind.route);
+    expect(opened.single.route, '/loyalty');
     await sub.cancel();
   });
 

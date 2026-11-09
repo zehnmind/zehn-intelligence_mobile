@@ -1,15 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../ui/zehn_integrator.dart' show ZiComponentController;
-import '../bootstrap/bootstrap.dart';
-import '../bootstrap/bootstrap_repository.dart';
 import '../chat/chat_cubit.dart';
+import '../chat/chat_settings.dart';
 import '../chat/chat_state.dart';
 import '../surface/surface.dart';
 import '../surface/surface_view.dart';
@@ -29,7 +29,7 @@ class ZiChatSheet extends StatefulWidget {
   const ZiChatSheet({
     super.key,
     required this.cubit,
-    required this.bootstrap,
+    required this.settings,
     required this.language,
     required this.builders,
     this.openRoute,
@@ -41,7 +41,10 @@ class ZiChatSheet extends StatefulWidget {
   static const _urlSchemes = {'https', 'tel', 'mailto'};
 
   final ZiChatCubit cubit;
-  final ZiBootstrapRepository bootstrap;
+
+  /// Theme, services and welcome words; they change when the starter
+  /// suggestions bring new ones.
+  final ValueListenable<ZiChatSettings> settings;
   final String Function() language;
   final Map<String, ZiComponentBuilder> builders;
   final FutureOr<void> Function(String route)? openRoute;
@@ -53,14 +56,14 @@ class ZiChatSheet extends StatefulWidget {
   static Future<void> show(
     BuildContext context, {
     required ZiChatCubit cubit,
-    required ZiBootstrapRepository bootstrap,
+    required ValueListenable<ZiChatSettings> settings,
     required String Function() language,
     required Map<String, ZiComponentBuilder> builders,
     required FutureOr<void> Function(String route)? openRoute,
     String? title,
     ZiVoiceRecorder Function()? recorderFactory,
   }) {
-    final style = ZiChatStyle.fromTheme(bootstrap.current?.theme ?? const {});
+    final style = ZiChatStyle.fromTheme(settings.value.theme);
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -75,7 +78,7 @@ class ZiChatSheet extends StatefulWidget {
         child: SizedBox.expand(
           child: ZiChatSheet(
             cubit: cubit,
-            bootstrap: bootstrap,
+            settings: settings,
             language: language,
             builders: builders,
             openRoute: openRoute,
@@ -96,7 +99,6 @@ enum _View { landing, listening, conversation }
 class _ZiChatSheetState extends State<ZiChatSheet> {
   final _text = TextEditingController();
   final _scroll = ScrollController();
-  final Set<String> _refreshed = {};
   StreamSubscription<ZiComponentItem>? _opens;
   StreamSubscription<double>? _levels;
   ZiVoiceRecorder? _recorder;
@@ -107,14 +109,15 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   DateTime? _startedAt;
 
   ZiStrings get _words => ZiStrings.of(widget.language());
-  ZiBootstrap? get _boot => widget.bootstrap.current;
-  ZiChatStyle get _style => ZiChatStyle.fromTheme(_boot?.theme ?? const {});
-  bool get _speech => _boot?.services.contains('stt') ?? false;
+  ZiChatSettings get _settings => widget.settings.value;
+  ZiChatStyle get _style => ZiChatStyle.fromTheme(_settings.theme);
+  bool get _speech => _settings.speech;
 
   @override
   void initState() {
     super.initState();
     _opens = widget.cubit.opens.listen(_open);
+    widget.settings.addListener(_settingsChanged);
     _text.addListener(() => setState(() {}));
     unawaited(widget.cubit.loadStarterSuggestions());
   }
@@ -122,6 +125,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   @override
   void dispose() {
     unawaited(_opens?.cancel());
+    widget.settings.removeListener(_settingsChanged);
     unawaited(_levels?.cancel());
     _text.dispose();
     _scroll.dispose();
@@ -129,6 +133,10 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     // Closing the chat stops spoken replies (MOBILE_INTEGRATION.md, section 4).
     unawaited(widget.cubit.stopAudio());
     super.dispose();
+  }
+
+  void _settingsChanged() {
+    if (mounted) setState(() {});
   }
 
   _View _view(ZiChatState state) {
@@ -142,22 +150,22 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   void _open(ZiComponentItem item) {
     if (!mounted) return;
     final builder = widget.builders[item.component];
-    final def = _boot?.components[item.component];
     if (item.kind == ZiComponentKind.route) {
+      final route = item.route;
       if (builder != null) {
         final nav = Navigator.of(context);
         _closeChat();
         unawaited(nav.push(MaterialPageRoute<void>(
           builder: (c) => builder(c, item.data, ZiComponentController(onCompleted: () => Navigator.of(c).maybePop())),
         )));
-      } else if (def?.route != null) {
-        _openRoute(def!.route!, item.data);
+      } else if (route != null && route.startsWith('/')) {
+        _openRoute(route, item.data);
       } else {
         debugPrint('zehn_intelligence: no route for component "${item.component}"');
       }
       return;
     }
-    if (builder == null && def?.surface == null) {
+    if (builder == null && item.surface == null) {
       debugPrint('zehn_intelligence: nothing to draw for sheet "${item.component}"');
       return;
     }
@@ -171,7 +179,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         child: builder != null
             ? builder(c, item.data, ZiComponentController(onCompleted: () => Navigator.of(c).maybePop()))
-            : _surface(def?.surface, item.data),
+            : _surface(item.surface, item.data),
       ),
     ));
   }
@@ -214,17 +222,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   Widget _component(ZiComponentItem item) {
     final builder = widget.builders[item.component];
     if (builder != null) return builder(context, item.data, const ZiComponentController());
-    final surface = _boot?.components[item.component]?.surface;
-    if (surface == null) {
-      // Published after this copy of the start-up data: fetch once, redraw.
-      if (_refreshed.add(item.component)) {
-        unawaited(widget.bootstrap.refresh().then((_) {
-          if (mounted) setState(() {});
-        }));
-      }
-      return const SizedBox.shrink();
-    }
-    return _surface(surface, item.data);
+    return _surface(item.surface, item.data);
   }
 
   Widget _surface(Map<String, Object?>? json, Map<String, Object?> data) {
@@ -233,7 +231,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       return ZiSurfaceView(
         surface: ZiSurface.parse(json),
         data: data,
-        theme: ZiTheme(_boot?.theme ?? const {}),
+        theme: ZiTheme(_settings.theme),
         language: widget.language(),
         onAction: _onAction,
       );
@@ -297,7 +295,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       widget.cubit.showError('payload_too_large');
       return;
     }
-    await widget.cubit.sendAudio(base64Encode(bytes), 'm4a', voiceReply: _boot?.services.contains('tts') ?? false);
+    await widget.cubit.sendAudio(base64Encode(bytes), 'm4a', voiceReply: _settings.voiceReply);
   }
 
   // ---- layout --------------------------------------------------------------
@@ -398,9 +396,8 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   // ---- landing -------------------------------------------------------------
 
   Widget _landing(ZiChatState state, ZiChatStyle s, ZiStrings words) {
-    final language = widget.language();
-    final title = _boot?.welcomeTitle[language] ?? words.welcomeTitle;
-    final subtitle = _boot?.welcomeSubtitle[language] ?? words.welcomeSubtitle;
+    final title = _settings.welcomeTitle ?? words.welcomeTitle;
+    final subtitle = _settings.welcomeSubtitle ?? words.welcomeSubtitle;
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         physics: const ClampingScrollPhysics(),

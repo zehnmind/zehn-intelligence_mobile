@@ -1,7 +1,5 @@
 import 'package:equatable/equatable.dart';
 
-import '../bootstrap/bootstrap.dart';
-
 /// One thing shown in the chat.
 sealed class ZiChatItem extends Equatable {
   const ZiChatItem();
@@ -29,8 +27,10 @@ final class ZiAssistantItem extends ZiChatItem {
   List<Object?> get props => [id, text];
 }
 
+enum ZiComponentKind { inline, sheet, route }
+
 final class ZiComponentItem extends ZiChatItem {
-  const ZiComponentItem(this.callId, this.component, this.kind, this.data);
+  const ZiComponentItem(this.callId, this.component, this.kind, this.data, {this.surface, this.route});
 
   final String callId;
   final String component;
@@ -40,8 +40,14 @@ final class ZiComponentItem extends ZiChatItem {
   /// because Equatable owns `props`.)
   final Map<String, Object?> data;
 
+  /// The card template from the event; null when the app draws it.
+  final Map<String, Object?>? surface;
+
+  /// The route template from the event, for [ZiComponentKind.route].
+  final String? route;
+
   @override
-  List<Object?> get props => [callId, component, kind, data];
+  List<Object?> get props => [callId, component, kind, data, surface, route];
 }
 
 enum ZiConfirmStatus { pending, allowed, declined, expired }
@@ -52,7 +58,7 @@ final class ZiConfirmItem extends ZiChatItem {
 
   final String callId;
 
-  /// The console's question; null shows the SDK's own words.
+  /// The server's question; null shows the SDK's own words.
   final String? title;
   final ZiConfirmStatus status;
 

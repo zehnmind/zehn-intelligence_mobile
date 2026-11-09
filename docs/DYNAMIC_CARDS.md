@@ -6,7 +6,7 @@ backend must store, validate and send so the mobile SDK can draw them.
 Matches SDK `0.4.0` (`zehn_intelligence`, `main`). Related documents:
 
 - `docs/MOBILE_INTEGRATION.md`: the turn protocol (`/v1/turns`, SSE events, tool results).
-- `docs/design/server-proxy.md`: the full SDK design, including `GET /v1/bootstrap`.
+- `docs/design/server-proxy.md`: the full SDK design (tool requests, chat settings).
 
 ---
 
@@ -17,17 +17,22 @@ assistant shows inside the chat. The customer app has **no code** for it:
 
 1. In the console, someone defines a card **template**: plain JSON that says "an image, then a
    title, then two chips, then a button".
-2. The backend sends every template to the phone once, at start-up, in `GET /v1/bootstrap`.
-3. During a conversation, when the assistant wants to show a card, the backend sends a
-   `mount_component` event with the card's **name** and its **data** (usually a tool result).
-4. The SDK finds the template by name, fills it with the data, and draws it with real native
-   widgets, in the app's colours and font.
+2. During a conversation, when the assistant wants to show a card, the backend sends a
+   `mount_component` event with the card's **name**, its **data** (usually a tool result) and
+   its **template**.
+3. The SDK fills the template with the data and draws it with real native widgets, in the app's
+   colours and font. The theme (colours, font) comes with the chat's starter suggestions
+   (`GET /v1/suggestions`), each time the chat opens.
 
 ```
-Console ──(templates, theme)──► Backend ──GET /v1/bootstrap──► SDK (keeps them)
+Console ──(templates, theme)──► Backend (stores and caches them)
                                    │
-   model wants a card ───────────► │ ──SSE: mount_component {component, props}──► SDK draws it
+   chat opens ───────────────────► │ ──GET /v1/suggestions → {suggestions, chat: {theme, …}}──► SDK
+   model wants a card ───────────► │ ──SSE: mount_component {component, props, surface}──► SDK draws it
 ```
+
+The phone keeps no templates: a card published in the console works on the next message, with no
+app release and no cache to refresh.
 
 Templates never contain code. The SDK has a fixed list of building blocks (the **catalog**); a
 template can only arrange those blocks and point them at data. Anything the SDK does not know is
@@ -58,6 +63,9 @@ Per app (and per published spec version, like tools today):
 | Theme | JSON object | Section 9. One per app. |
 | Welcome copy | per-language strings | Optional, shown on the chat's first screen (section 10). |
 
+The backend sends these to the phone as they are needed (sections 4 and 5); it can cache them as
+it likes.
+
 A component name should match `^[a-z][a-z0-9_]{1,47}$`, the same style as tool names.
 
 **Recommended:** link each component to the tool whose result it shows (for example
@@ -66,70 +74,27 @@ model do, to know which data to put in `props`.
 
 ---
 
-## 4. Sending templates: `GET /v1/bootstrap`
+## 4. Showing a card: the `mount_component` event
 
-The card parts of the start-up response. The rest of the response is described in the design
-document.
-
-```json
-{
-  "spec_version": "1.0.3",
-  "components": {
-    "cinema_details": {
-      "kind": "inline",
-      "surface": { "createSurface": { "...": "see section 6" } }
-    },
-    "store_card": {
-      "kind": "sheet",
-      "surface": { "createSurface": { "...": "..." } }
-    },
-    "loyalty_page": {
-      "kind": "route",
-      "route": "/loyalty"
-    },
-    "venue_page": {
-      "kind": "route",
-      "route": "/venues/{id}"
-    }
-  },
-  "theme": { "...": "see section 9" },
-  "copy": {
-    "welcome_title": { "uz": "Qanday yordam bera olaman?", "ru": "Чем могу помочь?", "en": "How can I help you?" },
-    "welcome_subtitle": { "en": "Find stores, restaurants, offers, directions and more." }
-  }
-}
-```
-
-Rules the SDK applies:
-
-- `kind` must be `inline`, `sheet` or `route`. Anything else and the component is left out.
-- `route` components need a non-empty `route` string. It is an app route (a path the app's
-  router understands), not a URL.
-  `{name}` placeholders are filled from the props, URL-encoded: `/venues/{id}` with
-  `props: {"id": "a1"}` opens `/venues/a1`.
-- `inline` and `sheet` components need a `surface` object.
-- One broken component is left out; the others still work.
-- The SDK caches the whole response on the phone. When the backend mounts an `inline` card the
-  cached copy does not have, the SDK fetches `/v1/bootstrap` again once and redraws. (A `sheet` or
-  `route` it doesn't know is skipped.) So a newly published card works without an app release,
-  but publish the template **before** the model can mount it.
-
----
-
-## 5. Showing a card: the `mount_component` event
-
-Sent in the turn's SSE stream, as already defined in `MOBILE_INTEGRATION.md`:
+Sent in the turn's SSE stream (`MOBILE_INTEGRATION.md`), with the template inline:
 
 ```
 event: mount_component
-data: {"turn_id":"7b2e…","seq":9,"call_id":"m_1","component":"cinema_details","kind":"inline","props":{ …data… }}
+data: {"turn_id":"7b2e…","seq":9,"call_id":"m_1","component":"cinema_details","kind":"inline","props":{ …data… },"surface":{"createSurface":{ …section 6… }}}
+```
+
+```
+event: mount_component
+data: {"turn_id":"7b2e…","seq":10,"call_id":"m_2","component":"venue_page","kind":"route","props":{"id":"a1"},"route":"/venues/{id}"}
 ```
 
 | Field | Rule |
 |---|---|
-| `component` | A name from `/v1/bootstrap` → `components`. |
-| `kind` | Must equal the component's `kind`. The SDK uses the event's value to decide where to draw it. |
+| `component` | The component's name. The SDK uses it only to find an app widget with that name (below). |
+| `kind` | `inline`, `sheet` or `route`; anything else counts as `inline`. |
 | `props` | The data the template reads (section 6.2). Any JSON object. |
+| `surface` | `inline` and `sheet`: the component's template (section 6). |
+| `route` | `route`: an app route (a path the app's router understands, starting with `/`), not a URL. `{name}` placeholders are filled from the props, URL-encoded: `/venues/{id}` with `props: {"id": "a1"}` opens `/venues/a1`. |
 | `call_id` | Any unique string; history uses it. |
 
 What the SDK does:
@@ -140,6 +105,9 @@ What the SDK does:
 | `sheet` | Opens a bottom sheet over the chat with the surface. |
 | `route` | Closes the chat and asks the app to open the route. |
 
+An `inline` or `sheet` event without a `surface`, or a `route` event without a `route`, shows
+nothing (unless the app has its own widget, below).
+
 **Where `props` come from.** Normally from the tool result the phone just posted to
 `/v1/turns/{id}/tool-results`: the server already has that JSON. Send it, or a subset of it, as
 `props`. Keep `props` under **32 KB**, the same limit as tool results.
@@ -147,6 +115,39 @@ What the SDK does:
 **The app can override a card.** If the app registered its own Flutter widget under the same name
 (`ZehnIntelligence.registerComponent`), the SDK draws the app's widget instead of the template.
 The backend does not need to know; it sends the same event.
+
+---
+
+## 5. Theme and welcome text: `GET /v1/suggestions`
+
+The SDK asks for starter suggestions each time the chat opens empty. The same answer carries the
+chat's settings in a `chat` field:
+
+```json
+{
+  "suggestions": ["Kinoteatr haqida aytib ber", "Kartamda nechta ball bor?"],
+  "chat": {
+    "theme": { "...": "see section 9" },
+    "welcome_title": "Qanday yordam bera olaman?",
+    "welcome_subtitle": "Do‘konlar, restoranlar, aksiyalar va boshqalar.",
+    "services": ["llm", "stt", "tts"],
+    "languages": ["uz", "ru", "en"],
+    "default_language": "uz",
+    "spec_version": "1.0.3"
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `theme` | Section 9. Used by the chat and by every card. |
+| `welcome_title`, `welcome_subtitle` | The chat's first screen, already in the `language` of the request (section 10). |
+| `services` | `stt` shows the mic, `tts` asks for spoken replies. |
+| `languages`, `default_language` | Which languages the assistant speaks; the SDK picks the phone's language if it is listed, else the default. |
+| `spec_version` | Optional; the SDK sends it back as `X-ZI-Spec-Version`. |
+
+Every field is optional: a missing one uses the SDK's own default (no mic, the SDK's colours and
+words). A `chat` field that is missing altogether keeps the settings the SDK already has.
 
 ---
 
@@ -288,7 +289,8 @@ Careful with URLs: if the data already contains `https://`, use the path directl
 
 ## 9. Theme
 
-One per app. Cards and the chat itself both read it.
+One per app, sent in `GET /v1/suggestions` → `chat.theme` (section 5). Cards and the chat itself
+both read it.
 
 ```json
 {
@@ -333,8 +335,10 @@ token can produce, for example, white text on a white card.
 
 ## 10. Welcome copy (optional)
 
-`copy.welcome_title` and `copy.welcome_subtitle`: per-language strings for the chat's first screen
-(the "How can I help you?" card). Missing languages fall back to the SDK's own neutral text.
+`chat.welcome_title` and `chat.welcome_subtitle` in `GET /v1/suggestions` (section 5): plain
+strings for the chat's first screen (the "How can I help you?" card), in the `language` the request
+asked for. Store them per language in the console and send the one asked for. Missing: the SDK's
+own neutral text.
 
 ---
 
@@ -375,7 +379,8 @@ A JSON Schema for checks 1–6 is in the appendix.
 }
 ```
 
-**Template** in `/v1/bootstrap` → `components.cinema_details`:
+**Template** the console stores for `cinema_details` (kind `inline`); the backend sends its
+`surface` with the card:
 
 ```json
 {
@@ -423,7 +428,7 @@ event: text.delta
 data: {"turn_id":"t1","seq":4,"text":"Here's **Cinematica**:"}
 
 event: mount_component
-data: {"turn_id":"t1","seq":5,"call_id":"m_1","component":"cinema_details","kind":"inline","props":{ …the tool result above… }}
+data: {"turn_id":"t1","seq":5,"call_id":"m_1","component":"cinema_details","kind":"inline","props":{ …the tool result above… },"surface":{ …the template's surface above… }}
 ```
 
 **The user sees:** a dark rounded card with the cinema photo, a "Cinema" chip and a "Floor 4"
@@ -438,13 +443,13 @@ font, drawn natively.
 
 | Problem | Result for the user |
 |---|---|
-| `component` name unknown to the phone | SDK refetches `/v1/bootstrap` once; if still unknown, nothing is drawn. |
+| `inline` / `sheet` event without `surface`, and no app widget | Nothing is drawn for that card. |
 | Surface JSON broken (no `createSurface`, missing `root`, duplicate ids) | Nothing is drawn for that card. |
 | Unknown block type, or a `child` id that doesn't exist | That block is skipped (a red note in debug builds only). |
 | Path leads nowhere | Empty text. |
 | Image fails to load, or `src` isn't `http(s)` | A small placeholder icon. |
 | Unknown action, or `open_url` with another scheme | The tap does nothing. |
-| `route` component without `route` | Left out at start-up; mounting it does nothing. |
+| `route` event without `route` (or not starting with `/`), and no app widget | Nothing happens. |
 
 Nothing in a template can crash the app or run code. A tap can only open an app route, ask a
 question, or open an `https:`, `tel:` or `mailto:` link; images load only over `http(s)`.
@@ -453,14 +458,16 @@ question, or open an `https:`, `tel:` or `mailto:` link; images load only over `
 
 ## 14. Testing without the real backend
 
-The SDK repository has a mock console that serves any start-up data file:
+The SDK repository has a mock console that plays the backend for an app description file:
 
 ```bash
-dart run zehn_intelligence:mock_server --bootstrap path/to/bootstrap.json
+dart run zehn_intelligence:mock_server --app path/to/app.json
 ```
 
-- Put your `components`, `theme` and `copy` in the file (TCM's is at
-  `tcm_mobile-new-backend/zehn_test/bootstrap.json`).
+- Put the app's `api`, `tools`, `components`, `theme`, `copy` and `services` in the file (TCM's
+  is at `tcm_mobile-new-backend/zehn_test/bootstrap.json`). The mock sends each card's `surface`
+  in `mount_component`, each tool's built request in `client_api_request.http`, and the theme
+  and welcome text in `GET /v1/suggestions`, as the backend should.
 - The mock answers "cinema"/"kino"/"кино" questions with `cinemas.list` and mounts
   `cinema_details`, and "loyalty" with the `loyalty_page` route.
 - Run any app with `ZehnIntelligence.init(consoleUrl: Uri.parse('http://127.0.0.1:8787'), …)`.
@@ -476,6 +483,10 @@ layouts built from code that ships in the app; they don't accept downloaded code
 **Can the model generate a template on the fly?** Not in this version: the model picks a published
 card and fills it with data. Templates are made (or drafted by the analyzer) and reviewed in the
 console.
+
+**Isn't sending the template with every card wasteful?** A template is a few KB (aim under 16 KB)
+and gzips well. In return the phone keeps nothing that can go stale: a fix in the console shows up
+on the next card. Cache templates on the backend, not on the phone.
 
 **How do I add a new block or icon?** That's an SDK change (a new catalog version). Keep templates
 on `zehn.basic.v0` until then.

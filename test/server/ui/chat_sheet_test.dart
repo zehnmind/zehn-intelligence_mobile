@@ -1,21 +1,34 @@
 import 'dart:async';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
-import 'package:zehn_intelligence/src/server/bootstrap/bootstrap.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
+import 'package:zehn_intelligence/src/server/chat/chat_settings.dart';
 import 'package:zehn_intelligence/src/server/proxy/tool_runner.dart';
 import 'package:zehn_intelligence/src/server/ui/chat_sheet.dart';
 import 'package:zehn_intelligence/src/server/ui/voice.dart';
 import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiComponentController;
 
-import '../../support/bootstrap_fixture.dart';
 import '../../support/chat_fakes.dart';
 
 typedef ComponentBuilder = Widget Function(BuildContext, Map<String, Object?>, ZiComponentController);
+
+const voice = ZiChatSettings(services: {'llm', 'stt', 'tts'});
+
+/// A card template as the server sends it in `mount_component.surface`.
+const cinemaCard = <String, Object?>{
+  'createSurface': {
+    'surfaceId': 'cinema_details',
+    'catalogId': 'zehn.basic.v0',
+    'root': 'root',
+    'components': [
+      {'id': 'root', 'component': 'Text', 'text': {'path': '/name'}},
+    ],
+  },
+};
 
 class FakeRecorder implements ZiVoiceRecorder {
   FakeRecorder(this.bytes);
@@ -78,12 +91,12 @@ void main() {
 
   tearDown(() => cubit.close());
 
-  Widget sheetLauncher(ZiBootstrap data, Map<String, ComponentBuilder> builders) => Builder(
+  Widget sheetLauncher(ValueListenable<ZiChatSettings> settings, Map<String, ComponentBuilder> builders) => Builder(
     builder: (context) => TextButton(
       onPressed: () => ZiChatSheet.show(
         context,
         cubit: cubit,
-        bootstrap: FixedBootstrap(data),
+        settings: settings,
         language: () => 'en',
         builders: builders,
         openRoute: routes.add,
@@ -93,12 +106,18 @@ void main() {
     ),
   );
 
-  Future<void> open(WidgetTester tester, {Map<String, Object?>? boot, Map<String, ComponentBuilder> builders = const {}}) async {
+  Future<ValueNotifier<ZiChatSettings>> open(
+    WidgetTester tester, {
+    ZiChatSettings settings = voice,
+    Map<String, ComponentBuilder> builders = const {},
+  }) async {
     phone(tester);
-    final data = ZiBootstrap.fromJson(boot ?? bootstrapJson());
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Center(child: sheetLauncher(data, builders)))));
+    final notifier = ValueNotifier(settings);
+    addTearDown(notifier.dispose);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Center(child: sheetLauncher(notifier, builders)))));
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
+    return notifier;
   }
 
   /// From the landing: "Type a message", then type and send.
@@ -125,16 +144,22 @@ void main() {
     expect(find.byType(TextField), findsNothing);
   });
 
-  testWidgets('console copy overrides the welcome text', (tester) async {
-    await open(tester, boot: {
-      ...bootstrapJson(),
-      'copy': {
-        'welcome_title': {'en': 'Welcome to the mall'},
-        'welcome_subtitle': {'en': 'Find stores, restaurants and offers.'},
-      },
-    });
+  testWidgets('chat settings override the welcome text', (tester) async {
+    await open(tester, settings: const ZiChatSettings(
+      welcomeTitle: 'Welcome to the mall',
+      welcomeSubtitle: 'Find stores, restaurants and offers.',
+    ));
     expect(find.text('Welcome to the mall'), findsOneWidget);
     expect(find.text('Find stores, restaurants and offers.'), findsOneWidget);
+  });
+
+  testWidgets('settings that arrive while the chat is open are used at once', (tester) async {
+    final settings = await open(tester, settings: const ZiChatSettings());
+    expect(find.text('Tap to speak'), findsNothing);
+    settings.value = const ZiChatSettings(services: {'stt'}, welcomeTitle: 'Welcome to the mall');
+    await tester.pumpAndSettle();
+    expect(find.text('Welcome to the mall'), findsOneWidget);
+    expect(find.text('Tap to speak'), findsOneWidget);
   });
 
   testWidgets('a suggestion chip sends its text and shows the conversation', (tester) async {
@@ -181,10 +206,10 @@ void main() {
     expect(find.text('Thinking…'), findsNothing);
   });
 
-  testWidgets('inline component from start-up data is drawn', (tester) async {
+  testWidgets('an inline card is drawn from the template in the event', (tester) async {
     turns.script([
       started,
-      const MountComponent(callId: 'm1', component: 'cinema_details', kind: 'inline', props: {'name': 'Cinematica'}),
+      const MountComponent(callId: 'm1', component: 'cinema_details', kind: 'inline', props: {'name': 'Cinematica'}, surface: cinemaCard),
       done,
     ]);
     await open(tester);
@@ -192,10 +217,23 @@ void main() {
     expect(find.text('Cinematica'), findsOneWidget);
   });
 
-  testWidgets('in-app builder wins over start-up data', (tester) async {
+  testWidgets('a card with no template and no builder draws nothing', (tester) async {
     turns.script([
       started,
       const MountComponent(callId: 'm1', component: 'cinema_details', kind: 'inline', props: {'name': 'Cinematica'}),
+      const TextDelta(text: 'after'),
+      done,
+    ]);
+    await open(tester);
+    await type(tester, 'kino');
+    expect(find.text('Cinematica'), findsNothing);
+    expect(find.textContaining('after', findRichText: true), findsOneWidget);
+  });
+
+  testWidgets('in-app builder wins over the template', (tester) async {
+    turns.script([
+      started,
+      const MountComponent(callId: 'm1', component: 'cinema_details', kind: 'inline', props: {'name': 'Cinematica'}, surface: cinemaCard),
       done,
     ]);
     await open(tester, builders: {'cinema_details': (c, data, ctl) => Text('from app ${data['name']}')});
@@ -204,14 +242,12 @@ void main() {
   });
 
   testWidgets('route component closes the sheet and calls openRoute with filled placeholders', (tester) async {
-    final boot = bootstrapJson();
-    (boot['components']! as Map)['cinema_page'] = {'kind': 'route', 'route': '/explore/cinema/{id}'};
     turns.script([
       started,
-      const MountComponent(callId: 'm1', component: 'cinema_page', kind: 'route', props: {'id': 1}),
+      const MountComponent(callId: 'm1', component: 'cinema_page', kind: 'route', props: {'id': 1}, route: '/explore/cinema/{id}'),
       done,
     ]);
-    await open(tester, boot: boot);
+    await open(tester);
     await type(tester, 'kino');
     expect(routes, ['/explore/cinema/1']);
     expect(find.byType(ZiChatSheet), findsNothing);
@@ -219,13 +255,12 @@ void main() {
 
   testWidgets('two route components in one turn close only the chat', (tester) async {
     phone(tester);
-    final boot = bootstrapJson();
-    (boot['components']! as Map)['cinema_page'] = {'kind': 'route', 'route': '/explore/cinema/{id}'};
-    final data = ZiBootstrap.fromJson(boot);
+    final settings = ValueNotifier(voice);
+    addTearDown(settings.dispose);
     turns.script([
       started,
-      const MountComponent(callId: 'm1', component: 'cinema_page', kind: 'route', props: {'id': 1}),
-      const MountComponent(callId: 'm2', component: 'loyalty_page', kind: 'route', props: {}),
+      const MountComponent(callId: 'm1', component: 'cinema_page', kind: 'route', props: {'id': 1}, route: '/explore/cinema/{id}'),
+      const MountComponent(callId: 'm2', component: 'loyalty_page', kind: 'route', props: {}, route: '/loyalty'),
       done,
     ]);
     await tester.pumpWidget(MaterialApp(
@@ -233,7 +268,7 @@ void main() {
         builder: (context) => Scaffold(
           body: TextButton(
             onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (context) => Scaffold(body: Column(children: [const Text('page b'), sheetLauncher(data, const {})])),
+              builder: (context) => Scaffold(body: Column(children: [const Text('page b'), sheetLauncher(settings, const {})])),
             )),
             child: const Text('next'),
           ),
@@ -270,8 +305,7 @@ void main() {
   });
 
   testWidgets('without stt there is no mic, and the orb opens typing', (tester) async {
-    final boot = bootstrapJson()..['services'] = ['llm'];
-    await open(tester, boot: boot);
+    await open(tester, settings: const ZiChatSettings(services: {'llm'}));
     expect(find.text('Tap to speak'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('zi-orb')));
     await tester.pumpAndSettle();

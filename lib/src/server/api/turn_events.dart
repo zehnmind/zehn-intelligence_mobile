@@ -55,6 +55,7 @@ sealed class TurnEvent {
         callId: d.string('call_id'),
         tool: d.string('tool'),
         args: d.optMap('args') ?? const {},
+        http: d.optMap('http'),
         turnId: turnId,
         seq: seq,
       ),
@@ -63,6 +64,8 @@ sealed class TurnEvent {
         component: d.string('component'),
         kind: d.optString('kind') ?? 'inline',
         props: d.optMap('props') ?? const {},
+        surface: d.optMap('surface'),
+        route: d.optString('route'),
         turnId: turnId,
         seq: seq,
       ),
@@ -113,11 +116,16 @@ final class TextDelta extends TurnEvent {
 }
 
 final class ClientApiRequest extends TurnEvent {
-  const ClientApiRequest({required this.callId, required this.tool, required this.args, super.turnId, super.seq});
+  const ClientApiRequest({required this.callId, required this.tool, required this.args, this.http, super.turnId, super.seq});
 
   final String callId;
   final String tool;
   final Map<String, Object?> args;
+
+  /// The customer API request the server built for this call (method,
+  /// path, query, headers, body, auth, result, confirm, base_url); null for
+  /// a tool the app handles itself. Checked by `ZiHttpCall.fromJson`.
+  final Map<String, Object?>? http;
 }
 
 final class MountComponent extends TurnEvent {
@@ -126,6 +134,8 @@ final class MountComponent extends TurnEvent {
     required this.component,
     required this.kind,
     required this.props,
+    this.surface,
+    this.route,
     super.turnId,
     super.seq,
   });
@@ -136,6 +146,13 @@ final class MountComponent extends TurnEvent {
   /// `inline`, `sheet` or `route`.
   final String kind;
   final Map<String, Object?> props;
+
+  /// The card template to draw [props] with (`docs/DYNAMIC_CARDS.md`), for
+  /// `inline` and `sheet`; null when the app registered its own widget.
+  final Map<String, Object?>? surface;
+
+  /// The app route to open, for `route`; `{name}` is filled from [props].
+  final String? route;
 }
 
 final class AudioClip extends TurnEvent {
