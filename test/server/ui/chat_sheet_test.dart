@@ -14,6 +14,7 @@ typedef ComponentBuilder = Widget Function(BuildContext, Map<String, Object?>, Z
 
 void main() {
   late FakeTurns turns;
+  late FakeAudio audio;
   late ZiChatCubit cubit;
   late List<String> routes;
 
@@ -22,11 +23,12 @@ void main() {
 
   setUp(() {
     turns = FakeTurns();
+    audio = FakeAudio();
     routes = [];
     cubit = ZiChatCubit(
       turns: turns,
       tools: FakeRunner(),
-      audio: FakeAudio(),
+      audio: audio,
       language: () => 'en',
       starterSuggestions: () async => ['Where is the cinema?'],
     );
@@ -152,5 +154,61 @@ void main() {
     expect(find.text('Try again'), findsNothing);
     await send(tester, 'two');
     expect(find.text('Try again'), findsOneWidget);
+  });
+
+  testWidgets('closing the sheet stops spoken replies', (tester) async {
+    await open(tester);
+    final before = audio.stops;
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pumpAndSettle();
+    expect(find.byType(ZiChatSheet), findsNothing);
+    expect(audio.stops, greaterThan(before));
+  });
+
+  testWidgets('two route components in one turn close only the chat', (tester) async {
+    final boot = bootstrapJson();
+    (boot['components']! as Map)['cinema_page'] = {'kind': 'route', 'route': '/explore/cinema/{id}'};
+    final data = ZiBootstrap.fromJson(boot);
+    turns.script([
+      started,
+      const MountComponent(callId: 'm1', component: 'cinema_page', kind: 'route', props: {'id': 1}),
+      const MountComponent(callId: 'm2', component: 'loyalty_page', kind: 'route', props: {}),
+      done,
+    ]);
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (context) => Scaffold(
+                body: Column(children: [
+                  const Text('page b'),
+                  TextButton(
+                    onPressed: () => ZiChatSheet.show(
+                      context,
+                      cubit: cubit,
+                      bootstrap: FixedBootstrap(data),
+                      language: () => 'en',
+                      builders: const {},
+                      openRoute: routes.add,
+                    ),
+                    child: const Text('open'),
+                  ),
+                ]),
+              ),
+            )),
+            child: const Text('next'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('next'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await send(tester, 'kino');
+    expect(routes, ['/explore/cinema/1', '/loyalty']);
+    expect(find.byType(ZiChatSheet), findsNothing);
+    expect(find.text('page b'), findsOneWidget);
   });
 }

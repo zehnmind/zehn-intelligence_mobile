@@ -80,6 +80,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   StreamSubscription<ZiComponentItem>? _opens;
   AgentVoiceRecorder? _recorder;
   bool _recording = false;
+  bool _closing = false;
 
   ZiStrings get _words => ZiStrings.of(widget.language());
   ZiBootstrap? get _boot => widget.bootstrap.current;
@@ -97,6 +98,8 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     _text.dispose();
     _scroll.dispose();
     unawaited(_recorder?.dispose());
+    // Closing the chat stops spoken replies (MOBILE_INTEGRATION.md, section 4).
+    unawaited(widget.cubit.stopAudio());
     super.dispose();
   }
 
@@ -108,7 +111,8 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     final def = _boot?.components[item.component];
     if (item.kind == ZiComponentKind.route) {
       if (builder != null) {
-        final nav = Navigator.of(context)..pop();
+        final nav = Navigator.of(context);
+        _closeChat();
         unawaited(nav.push(MaterialPageRoute<void>(
           builder: (c) => builder(c, item.data, ZiComponentController(onCompleted: () => Navigator.of(c).maybePop())),
         )));
@@ -139,8 +143,20 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       (m) => Uri.encodeComponent('${data[m[1]] ?? ''}'),
     );
     final open = widget.openRoute;
-    Navigator.of(context).pop();
+    _closeChat();
     if (open != null) unawaited(Future<void>.value(open(route)));
+  }
+
+  /// Closes this chat once, with any component sheet opened above it, and
+  /// never a route under it.
+  void _closeChat() {
+    if (_closing || !mounted) return;
+    _closing = true;
+    final mine = ModalRoute.of(context);
+    if (mine == null || !mine.isActive) return;
+    Navigator.of(context)
+      ..popUntil((route) => route == mine)
+      ..pop();
   }
 
   void _onAction(ZiSurfaceAction action) {

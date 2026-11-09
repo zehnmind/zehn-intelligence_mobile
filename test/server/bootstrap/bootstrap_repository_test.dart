@@ -72,4 +72,13 @@ void main() {
     await Future.wait([repo.refresh(), repo.refresh()]);
     expect(server.requests, hasLength(1));
   });
+
+  test('a failed cache write keeps the fresh data', () async {
+    final blocker = File('${dir.path}/not_a_dir')..writeAsStringSync('x');
+    server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 200, bootstrapJson()));
+    final repo = ZiBootstrapRepository(api: api, store: ZiFileStore(() async => Directory(blocker.path)));
+    final b = await repo.refresh();
+    expect(b!.specVersion, '1.0.3');
+    expect(repo.current, same(b));
+  });
 }

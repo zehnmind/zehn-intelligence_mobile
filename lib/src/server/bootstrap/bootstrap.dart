@@ -9,6 +9,7 @@ class ZiBootstrap {
   ZiBootstrap._({
     required Map<String, Object?> raw,
     required this.specVersion,
+    required this.track,
     required this.services,
     required this.languages,
     required this.defaultLanguage,
@@ -49,6 +50,7 @@ class ZiBootstrap {
     return ZiBootstrap._(
       raw: map,
       specVersion: _string(map['spec_version']),
+      track: _string(map['track']),
       services: _strings(map['services']).toSet(),
       languages: _strings(map['languages']),
       defaultLanguage: _string(map['default_language']),
@@ -61,6 +63,9 @@ class ZiBootstrap {
 
   final Map<String, Object?> _raw;
   final String? specVersion;
+
+  /// `test` or `prod`: the app key's track.
+  final String? track;
 
   /// `llm`, `stt`, `tts`.
   final Set<String> services;

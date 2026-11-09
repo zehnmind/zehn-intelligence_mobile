@@ -36,6 +36,8 @@ class ZiProxyExecutor {
 
   bool get hasLogin => _appClient != null || _accessToken != null;
 
+  static const _loopback = {'localhost', '127.0.0.1', '::1', '[::1]'};
+
   /// The trimmed JSON answer. Throws [ZiToolError] the model can read.
   Future<Object?> call(ZiHttpTool tool, Map<String, Object?> args, ZiBootstrap boot, ZiRequestContext ctx) async {
     final request = buildRequest(tool, args, boot.api, ctx);
@@ -44,7 +46,7 @@ class ZiProxyExecutor {
     if (app != null) {
       response = await _send(app, request.path, request, const {}, appDefaults: true);
     } else {
-      response = await _callbacks(tool, request, boot.api);
+      response = await _callbacks(tool, request, boot);
     }
     final status = response.statusCode ?? 0;
     if (status == 401) {
@@ -56,10 +58,17 @@ class ZiProxyExecutor {
     return trimResult(_json(response.data), tool.result);
   }
 
-  Future<Response<Object?>> _callbacks(ZiHttpTool tool, ZiHttpRequest request, ZiApiSettings api) async {
+  Future<Response<Object?>> _callbacks(ZiHttpTool tool, ZiHttpRequest request, ZiBootstrap boot) async {
+    final api = boot.api;
     final base = _baseUrlOverride ?? api.baseUrl;
     if (base == null) {
       throw const ZiToolError('host_not_allowed', 'No base URL is set for the app API.');
+    }
+    // The user's token never goes over plain HTTP because of console data,
+    // except to this machine or in the test track. (An app's own
+    // apiBaseUrl is its own call.)
+    if (_baseUrlOverride == null && base.scheme == 'http' && boot.track != 'test' && !_loopback.contains(base.host)) {
+      throw ZiToolError('host_not_allowed', 'The app API at ${base.host} is not HTTPS.');
     }
     final url = '${base.toString().replaceAll(RegExp(r'/+$'), '')}${request.path}';
     final host = Uri.parse(url).host;

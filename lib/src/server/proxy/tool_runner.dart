@@ -22,6 +22,7 @@ class ZiToolRunner {
     required ZiRequestContext Function() context,
     this.timeout = const Duration(seconds: 20),
     this.maxResultBytes = 32768,
+    this.refreshTimeout = const Duration(seconds: 5),
   }) : _handlers = handlers,
        _proxy = proxy,
        _bootstrap = bootstrap,
@@ -34,10 +35,14 @@ class ZiToolRunner {
   final Duration timeout;
   final int maxResultBytes;
 
+  /// How long a round may wait for fresh start-up data; the server's
+  /// deadline for the whole round is 60 s.
+  final Duration refreshTimeout;
+
   /// Results in the order of [calls].
   Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls) async {
     final missing = calls.any((c) => !_handlers.containsKey(c.tool) && _bootstrap.current?.tools[c.tool] == null);
-    if (missing) await _bootstrap.refresh();
+    if (missing) await _bootstrap.refresh().timeout(refreshTimeout, onTimeout: () => _bootstrap.current);
     return Future.wait([for (final c in calls) _run(c)]);
   }
 

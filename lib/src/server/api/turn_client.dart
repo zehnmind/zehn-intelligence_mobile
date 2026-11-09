@@ -148,11 +148,17 @@ class ZiTurnClient {
     }
 
     Future<void> run() async {
+      // Armed before connecting too: a server that never answers is a dropped stream.
+      arm();
       final ResponseBody body;
       try {
         body = await open(cancel);
       } on ZiApiException catch (e) {
         finish(TurnFailed(e));
+        return;
+      } on Object catch (e) {
+        // The app's token callback or a file write failed: never leave the turn hanging.
+        finish(failed('network_error', '$e'));
         return;
       }
       if (finished) return;

@@ -37,7 +37,11 @@ class ZiBootstrapRepository {
       final json = await _api.getJson('/v1/bootstrap');
       final fresh = ZiBootstrap.fromJson(json);
       _use(fresh);
-      await _store.write(_file, fresh.toJson());
+      try {
+        await _store.write(_file, fresh.toJson());
+      } on Object catch (e) {
+        debugPrint('zehn_intelligence: start-up data not saved: $e');
+      }
     } on ZiApiException catch (e) {
       debugPrint('zehn_intelligence: start-up data not refreshed: $e');
     } on FormatException catch (e) {

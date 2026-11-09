@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../api/turn_client.dart';
@@ -121,7 +122,24 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     await _run(input, _generation);
   }
 
+  /// Stops spoken replies (the chat sheet closed).
+  Future<void> stopAudio() => _audio.stop();
+
   Future<void> _run(TurnInput input, int generation) async {
+    try {
+      await _loop(input, generation);
+    } on Object catch (e) {
+      // Last resort: a bug or a thrown callback must not leave the chat busy.
+      if (generation != _generation || isClosed) return;
+      _emit(state.copyWith(busy: false, items: [...state.items, const ZiErrorItem('internal_error', retryable: true)]));
+      assert(() {
+        debugPrint('zehn_intelligence: the turn failed: $e');
+        return true;
+      }());
+    }
+  }
+
+  Future<void> _loop(TurnInput input, int generation) async {
     var current = input;
     var stream = _turns.start(current);
     var conversationRetried = false;

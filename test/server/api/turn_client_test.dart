@@ -21,6 +21,14 @@ class FakeTokens implements ZiTokenSource {
   Future<String> refresh() async => current = 'tok-${++refreshed}';
 }
 
+class ThrowingTokens implements ZiTokenSource {
+  @override
+  Future<String> token() async => throw StateError('the app token call failed');
+
+  @override
+  Future<String> refresh() async => throw StateError('the app token call failed');
+}
+
 Map<String, Object?> ev(Map<String, Object?> data) => {'turn_id': 't1', 'seq': 1, ...data};
 
 final pausedEvent = (
@@ -188,5 +196,20 @@ void main() {
         deadline: DateTime.now().add(const Duration(milliseconds: 10))).toList();
     expect((events.single as TurnFailed).error.code, 'network_error');
     expect(server.requests, hasLength(1));
+  });
+
+  test('a token source that throws becomes one TurnFailed', () async {
+    final throwing = ZiTurnClient(api: ZiApiClient(baseUrl: server.url, info: info), tokens: () => ThrowingTokens());
+    final events = await throwing.start(input).toList().timeout(const Duration(seconds: 2));
+    expect((events.single as TurnFailed).error.code, 'network_error');
+    expect((events.single as TurnFailed).error.retryable, isTrue);
+  });
+
+  test('no answer to the request is stream_interrupted', () async {
+    server.on('POST', '/v1/turns', (req, _) async {
+      await Future<void>.delayed(const Duration(seconds: 3));
+    });
+    final events = await client.start(input).toList().timeout(const Duration(seconds: 2));
+    expect((events.single as TurnFailed).error.code, 'stream_interrupted');
   });
 }

@@ -154,4 +154,18 @@ void main() {
     final dead = ZiBootstrap.fromJson(bootstrapJson(baseUrl: url));
     await expectLater(ZiProxyExecutor().call(cinema, {}, dead, ctx), toolError('network_error'));
   });
+
+  test('plain http base URL is refused outside the test track', () async {
+    final json = bootstrapJson(baseUrl: 'http://api.example.invalid');
+    await expectLater(ZiProxyExecutor().call(cinema, {}, ZiBootstrap.fromJson(json), ctx), toolError('host_not_allowed'));
+  });
+
+  test('plain http base URL is allowed in the test track', () async {
+    final json = {...bootstrapJson(baseUrl: 'http://api.example.invalid'), 'track': 'test'};
+    await expectLater(ZiProxyExecutor().call(cinema, {}, ZiBootstrap.fromJson(json), ctx), toolError('network_error'));
+  });
+
+  test('track is parsed', () {
+    expect(ZiBootstrap.fromJson({...bootstrapJson(), 'track': 'test'}).track, 'test');
+  });
 }

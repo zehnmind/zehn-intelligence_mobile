@@ -1,12 +1,18 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zehn_intelligence/src/server/api/turn_client.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/bootstrap/bootstrap.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
 
 import '../../support/chat_fakes.dart';
+
+class ThrowingRunner extends FakeRunner {
+  @override
+  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls) async => throw StateError('bug');
+}
 
 void main() {
   late FakeTurns turns;
@@ -209,5 +215,24 @@ void main() {
     cubit.showError('payload_too_large');
     expect(cubit.state.items.single, const ZiErrorItem('payload_too_large'));
     expect(cubit.state.busy, isFalse);
+  });
+
+  test('a failure inside the turn ends it with a retryable error', () async {
+    final broken = ZiChatCubit(turns: turns, tools: ThrowingRunner(), audio: audio, language: () => 'uz');
+    turns.script([
+      started,
+      const ClientApiRequest(callId: 'c_1', tool: 'x', args: {}),
+      TurnPaused(callIds: const ['c_1'], deadline: DateTime.utc(2030), maxResultBytes: 32768, turnId: 't1'),
+    ]);
+    await broken.sendText('one');
+    expect(broken.state.busy, isFalse);
+    expect(broken.state.items.last, const ZiErrorItem('internal_error', retryable: true));
+    await broken.close();
+  });
+
+  test('stopAudio stops playback', () async {
+    final before = audio.stops;
+    await cubit.stopAudio();
+    expect(audio.stops, before + 1);
   });
 }

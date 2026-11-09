@@ -95,4 +95,20 @@ void main() {
     expect(results[0].errorCode, 'timeout');
     expect(results[1].ok, isTrue);
   });
+
+  test('a slow start-up refresh is cut short', () async {
+    server.on('GET', '/v1/bootstrap', (req, _) async {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await respondJson(req, 200, bootstrapJson(baseUrl: server.url.toString()));
+    });
+    final quick = ZiToolRunner(
+      handlers: const {},
+      proxy: ZiProxyExecutor(),
+      bootstrap: bootstrap,
+      context: () => ctx,
+      refreshTimeout: const Duration(milliseconds: 100),
+    );
+    final results = await quick.runAll([call('a', 'nope')]).timeout(const Duration(seconds: 1));
+    expect(results.single.errorCode, 'handler_not_registered');
+  });
 }
