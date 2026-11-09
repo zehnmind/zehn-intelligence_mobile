@@ -42,8 +42,8 @@ class ZiChatSheet extends StatefulWidget {
 
   final ZiChatCubit cubit;
 
-  /// Theme, services and welcome words; they change when the starter
-  /// suggestions bring new ones.
+  /// Theme, services and welcome words from `GET /v1/config`; they can
+  /// change while the chat is open.
   final ValueListenable<ZiChatSettings> settings;
   final String Function() language;
   final Map<String, ZiComponentBuilder> builders;
@@ -159,7 +159,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
           builder: (c) => builder(c, item.data, ZiComponentController(onCompleted: () => Navigator.of(c).maybePop())),
         )));
       } else if (route != null && route.startsWith('/')) {
-        _openRoute(route, item.data);
+        _openRoute(route);
       } else {
         debugPrint('zehn_intelligence: no route for component "${item.component}"');
       }
@@ -184,8 +184,9 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     ));
   }
 
-  void _openRoute(String template, Map<String, Object?> data) {
-    final route = template.replaceAllMapped(RegExp(r'\{(\w+)\}'), (m) => Uri.encodeComponent('${data[m[1]] ?? ''}'));
+  /// Closes the chat and opens [route] as it came: the server already
+  /// filled and escaped it.
+  void _openRoute(String route) {
     final open = widget.openRoute;
     _closeChat();
     if (open != null) unawaited(Future<void>.value(open(route)));
@@ -210,7 +211,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
         if (text is String) _send(text);
       case 'open_route':
         final route = action.args['route'];
-        if (route is String && route.startsWith('/')) _openRoute(route, const {});
+        if (route is String && route.startsWith('/')) _openRoute(route);
       case 'open_url':
         final url = Uri.tryParse('${action.args['url'] ?? ''}');
         if (url != null && ZiChatSheet._urlSchemes.contains(url.scheme)) {
@@ -368,7 +369,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     if (view == _View.landing) {
       return ZiHeaderBar(
         style: s,
-        title: widget.title ?? words.title,
+        title: widget.title ?? _settings.assistantName ?? words.title,
         subtitle: words.poweredBy,
         leadingIcon: 'close_line',
         leadingKey: const ValueKey('zi-close'),
@@ -396,8 +397,9 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   // ---- landing -------------------------------------------------------------
 
   Widget _landing(ZiChatState state, ZiChatStyle s, ZiStrings words) {
-    final title = _settings.welcomeTitle ?? words.welcomeTitle;
-    final subtitle = _settings.welcomeSubtitle ?? words.welcomeSubtitle;
+    final language = widget.language();
+    final title = _settings.welcomeTitle(language) ?? words.welcomeTitle;
+    final subtitle = _settings.welcomeSubtitle(language) ?? words.welcomeSubtitle;
     return LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         physics: const ClampingScrollPhysics(),
@@ -541,7 +543,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           children: [
             for (final item in state.items)
-              Padding(padding: const EdgeInsets.only(bottom: 12), child: _item(item, s, words)),
+              Padding(padding: const EdgeInsets.only(bottom: 12), child: _item(item, s, words, busy: state.busy)),
             if (thinking)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
@@ -562,7 +564,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     ]);
   }
 
-  Widget _item(ZiChatItem item, ZiChatStyle s, ZiStrings words) => switch (item) {
+  Widget _item(ZiChatItem item, ZiChatStyle s, ZiStrings words, {required bool busy}) => switch (item) {
     ZiUserItem() => Align(
       alignment: Alignment.centerRight,
       child: Container(
@@ -590,7 +592,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       ),
     ),
     ZiComponentItem() => _component(item),
-    ZiConfirmItem() => _confirmCard(item, s, words),
+    ZiConfirmItem() => _confirmCard(item, s, words, busy: busy),
     ZiErrorItem() => Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -614,50 +616,54 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     ),
   };
 
-  /// A data-changing call: the user allows or cancels it here.
-  Widget _confirmCard(ZiConfirmItem item, ZiChatStyle s, ZiStrings words) {
+  /// A data-changing call: the server's card, then Cancel and Confirm. One
+  /// tap answers it; nothing reaches the app's API before Confirm.
+  Widget _confirmCard(ZiConfirmItem item, ZiChatStyle s, ZiStrings words, {required bool busy}) {
     final pending = item.status == ZiConfirmStatus.pending;
-    Widget button(String text, Key key, {required bool allow}) => Expanded(
+    final strong = item.method == 'DELETE' ? s.danger : s.accent;
+    Widget button(String text, Key key, {required bool confirm}) => Expanded(
       child: GestureDetector(
         key: key,
         behavior: HitTestBehavior.opaque,
-        onTap: () => widget.cubit.answerConfirmation(item.callId, allow: allow),
+        onTap: busy ? null : () => unawaited(widget.cubit.decide(item.actionId, confirm: confirm)),
         child: Container(
           height: 44,
           alignment: Alignment.center,
-          decoration: BoxDecoration(color: allow ? s.accent : s.fill, borderRadius: BorderRadius.circular(100)),
-          child: Text(text, style: s.smallMedium.copyWith(color: allow ? s.onAccent : s.ink)),
+          decoration: BoxDecoration(color: confirm ? strong : s.fill, borderRadius: BorderRadius.circular(100)),
+          child: Text(text, style: s.smallMedium.copyWith(color: confirm ? s.onAccent : s.ink)),
         ),
       ),
     );
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: s.background,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: pending ? s.accent : s.line),
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(item.title ?? words.confirmDefault, style: s.bodyMedium),
-        const SizedBox(height: 12),
-        if (pending)
-          Row(children: [
-            button(words.decline, const ValueKey('zi-decline'), allow: false),
-            const SizedBox(width: 8),
-            button(words.allow, const ValueKey('zi-allow'), allow: true),
-          ])
-        else
-          Text(
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (item.surface != null)
+        _surface(item.surface, item.data)
+      else
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: s.background, borderRadius: BorderRadius.circular(20), border: Border.all(color: s.line)),
+          child: Text(words.confirmDefault, style: s.bodyMedium),
+        ),
+      const SizedBox(height: 8),
+      if (pending)
+        Row(children: [
+          button(words.decline, const ValueKey('zi-decline'), confirm: false),
+          const SizedBox(width: 8),
+          button(item.label ?? words.confirm, const ValueKey('zi-confirm'), confirm: true),
+        ])
+      else
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
             switch (item.status) {
-              ZiConfirmStatus.allowed => words.allowed,
-              ZiConfirmStatus.declined => words.declined,
+              ZiConfirmStatus.confirmed => words.confirmed,
+              ZiConfirmStatus.cancelled => words.cancelled,
               _ => words.expired,
             },
             style: s.small.copyWith(color: s.muted),
           ),
-      ]),
-    );
+        ),
+    ]);
   }
 
   Widget _inputBar(ZiChatState state, ZiChatStyle s, ZiStrings words) {

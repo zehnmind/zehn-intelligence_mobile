@@ -50,20 +50,40 @@ final class ZiComponentItem extends ZiChatItem {
   List<Object?> get props => [callId, component, kind, data, surface, route];
 }
 
-enum ZiConfirmStatus { pending, allowed, declined, expired }
+enum ZiConfirmStatus { pending, confirmed, cancelled, expired }
 
-/// A data-changing call waiting for (or past) the user's yes or no.
+/// A data-changing call (the `confirm` event) waiting for, or past, the
+/// user's Confirm or Cancel.
 final class ZiConfirmItem extends ZiChatItem {
-  const ZiConfirmItem(this.callId, this.title, {this.status = ZiConfirmStatus.pending});
+  const ZiConfirmItem({
+    required this.actionId,
+    required this.tool,
+    required this.method,
+    this.surface,
+    this.data = const {},
+    this.label,
+    this.status = ZiConfirmStatus.pending,
+  });
 
-  final String callId;
+  final String actionId;
+  final String tool;
+  final String method;
 
-  /// The server's question; null shows the SDK's own words.
-  final String? title;
+  /// The card's template; null shows the SDK's own question.
+  final Map<String, Object?>? surface;
+
+  /// What the template reads: `confirm.props`.
+  final Map<String, Object?> data;
+
+  /// The Confirm button's word; null uses the SDK's.
+  final String? label;
   final ZiConfirmStatus status;
 
+  ZiConfirmItem withStatus(ZiConfirmStatus next) =>
+      ZiConfirmItem(actionId: actionId, tool: tool, method: method, surface: surface, data: data, label: label, status: next);
+
   @override
-  List<Object?> get props => [callId, title, status];
+  List<Object?> get props => [actionId, tool, method, surface, data, label, status];
 }
 
 final class ZiErrorItem extends ZiChatItem {

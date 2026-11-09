@@ -237,7 +237,6 @@ class ZehnIntelligence {
         'ZEHN_API_KEY': String.fromEnvironment('ZEHN_API_KEY'),
         'zi_console_url': String.fromEnvironment('zi_console_url'),
         'ZEHN_INTELLIGENCE_CONFIG_URL': String.fromEnvironment('ZEHN_INTELLIGENCE_CONFIG_URL'),
-        'zi_spec_version': String.fromEnvironment('zi_spec_version'),
       },
     );
     final package = await PackageInfo.fromPlatform();

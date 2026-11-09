@@ -52,6 +52,24 @@ void main() {
     expect(server.requests.single.query, {'page': '1'});
   });
 
+  test('a list in the query repeats the key', () async {
+    server.on('GET', '/stores', (req, _) => respondJson(req, 200, []));
+    await ZiProxyExecutor().call(ZiHttpCall(
+      method: 'GET',
+      path: '/stores',
+      query: const {'tag': ['food', 'kids'], 'page': '1'},
+      baseUrl: server.url,
+    ));
+    expect(server.requests.single.queryAll, {'tag': ['food', 'kids'], 'page': ['1']});
+  });
+
+  test('the app client repeats the key too', () async {
+    server.on('GET', '/stores', (req, _) => respondJson(req, 200, []));
+    await ZiProxyExecutor(appClient: Dio(BaseOptions(baseUrl: server.url.toString())))
+        .call(const ZiHttpCall(method: 'GET', path: '/stores', query: {'tag': ['food', 'kids']}));
+    expect(server.requests.single.queryAll['tag'], ['food', 'kids']);
+  });
+
   test('a renamed login header is used', () async {
     final call = ZiHttpCall(method: 'GET', path: '/cinematica/', authHeader: 'X-Token', authScheme: '', baseUrl: server.url);
     await ZiProxyExecutor(accessToken: () => 'abc').call(call);

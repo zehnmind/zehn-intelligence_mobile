@@ -39,12 +39,10 @@ class FakeRunner extends ZiToolRunner {
   FakeRunner() : super(handlers: const {}, proxy: ZiProxyExecutor());
 
   final List<List<ClientApiRequest>> rounds = [];
-  final List<DateTime?> deadlines = [];
 
   @override
-  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls, {DateTime? deadline}) async {
+  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls) async {
     rounds.add(calls);
-    deadlines.add(deadline);
     return [for (final c in calls) ToolCallResult.ok(c.callId, {'tool': c.tool})];
   }
 }

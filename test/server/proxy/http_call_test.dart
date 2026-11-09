@@ -5,7 +5,7 @@ import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiToolError;
 Matcher toolError(String code) => throwsA(isA<ZiToolError>().having((e) => e.code, 'code', code));
 
 void main() {
-  test('parses a GET request the server built', () {
+  test('parses the request the server built (client_api_request.request)', () {
     final c = ZiHttpCall.fromJson({
       'method': 'get',
       'path': '/location/venues/a%2Fb',
@@ -25,11 +25,20 @@ void main() {
     expect(c.result!.fields, ['id', 'name']);
     expect(c.result!.maxItems, 5);
     expect(c.body, isNull);
-    expect(c.confirm, isFalse);
+    expect(c.isWrite, isFalse);
     expect(c.baseUrl, isNull);
   });
 
-  test('a write carries its body and asks first by default', () {
+  test('a list in the query stays a list, so its key repeats', () {
+    final c = ZiHttpCall.fromJson({
+      'method': 'GET',
+      'path': '/stores',
+      'query': {'tag': ['food', 2], 'page': 1, 'empty': null},
+    });
+    expect(c.query, {'tag': ['food', '2'], 'page': '1'});
+  });
+
+  test('a write carries its body', () {
     final c = ZiHttpCall.fromJson({
       'method': 'POST',
       'path': '/parking/reservations',
@@ -37,23 +46,8 @@ void main() {
       'base_url': 'https://api.example.uz',
     });
     expect(c.body, {'zone_id': 7, 'plates': ['01A123BC']});
-    expect(c.confirm, isTrue);
-    expect(c.confirmTitle, isNull);
+    expect(c.isWrite, isTrue);
     expect(c.baseUrl, Uri.parse('https://api.example.uz'));
-  });
-
-  test('confirm can carry the question, or be switched off', () {
-    final asked = ZiHttpCall.fromJson({
-      'method': 'DELETE',
-      'path': '/r/x9',
-      'confirm': {'title': 'Cancel reservation x9?'},
-    });
-    expect(asked.confirm, isTrue);
-    expect(asked.confirmTitle, 'Cancel reservation x9?');
-    final quiet = ZiHttpCall.fromJson({'method': 'PUT', 'path': '/f', 'confirm': false});
-    expect(quiet.confirm, isFalse);
-    final readAsked = ZiHttpCall.fromJson({'method': 'GET', 'path': '/x', 'confirm': true});
-    expect(readAsked.confirm, isTrue);
   });
 
   test('the auth header and scheme can be renamed', () {

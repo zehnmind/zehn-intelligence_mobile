@@ -5,62 +5,40 @@ import 'package:zehn_intelligence/src/server/api/api_client.dart';
 import 'package:zehn_intelligence/src/server/auth/file_store.dart';
 import 'package:zehn_intelligence/src/server/auth/token_source.dart';
 
-import '../../support/fake_server.dart';
-import '../../support/test_info.dart';
-
 void main() {
-  late FakeServer server;
-  late ZiApiClient api;
   late Directory dir;
   late ZiFileStore store;
-  var issued = 0;
 
   setUp(() async {
-    issued = 0;
-    server = await FakeServer.start();
-    api = ZiApiClient(baseUrl: server.url, info: info);
     dir = await Directory.systemTemp.createTemp('zi_tokens');
     store = ZiFileStore(() async => dir);
-    server.on('POST', '/v1/installs', (req, _) {
-      issued++;
-      return respondJson(req, 200, {'token': 'install-$issued', 'token_type': 'Bearer', 'expires_in': 3600});
-    });
   });
 
-  tearDown(() async {
-    await server.close();
-    await dir.delete(recursive: true);
-  });
+  tearDown(() => dir.delete(recursive: true));
 
-  test('install token is fetched once and cached', () async {
-    final source = InstallTokenSource(api: api, store: store);
-    expect(await source.token(), 'install-1');
-    expect(await source.token(), 'install-1');
-    expect(server.requests, hasLength(1));
-    final id = (server.requests.single.json! as Map)['install_id'] as String;
+  test('the install id is made once and kept', () async {
+    final id = await loadInstallId(store);
     expect(id, matches(RegExp(r'^[0-9a-f]{32}$')));
+    expect(await loadInstallId(store), id);
+    expect(await loadInstallId(ZiFileStore(() async => dir)), id);
   });
 
-  test('a new source on the same store reuses the saved token', () async {
-    await InstallTokenSource(api: api, store: store).token();
-    expect(await InstallTokenSource(api: api, store: store).token(), 'install-1');
-    expect(server.requests, hasLength(1));
+  test('an install id saved by an older SDK is kept', () async {
+    await store.write('install', {'install_id': 'ffffffffffffffffffffffffffffffff', 'token': 'old'});
+    expect(await loadInstallId(store), 'ffffffffffffffffffffffffffffffff');
   });
 
-  test('install_id survives refresh and a new source', () async {
-    final first = InstallTokenSource(api: api, store: store);
-    await first.token();
-    expect(await InstallTokenSource(api: api, store: store).refresh(), 'install-2');
-    final ids = server.requests.map((r) => (r.json! as Map)['install_id']).toSet();
-    expect(ids, hasLength(1));
+  test('a broken saved id is replaced', () async {
+    await File('${dir.path}/install.json').writeAsString('{oops');
+    final id = await loadInstallId(store);
+    expect(id, matches(RegExp(r'^[0-9a-f]{32}$')));
+    expect(await loadInstallId(store), id);
   });
 
-  test('expired token is fetched again', () async {
-    var now = DateTime.utc(2026, 11, 9, 10);
-    final source = InstallTokenSource(api: api, store: store, now: () => now);
-    await source.token();
-    now = now.add(const Duration(hours: 2));
-    expect(await source.token(), 'install-2');
+  test('an anonymous user has no token', () async {
+    const source = AnonymousTokenSource();
+    expect(await source.token(), isNull);
+    expect(await source.refresh(), isNull);
   });
 
   test('callback source caches and refreshes', () async {

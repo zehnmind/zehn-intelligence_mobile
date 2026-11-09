@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
-/// Small JSON files the SDK keeps between launches (the install token), in
+/// Small JSON files the SDK keeps between launches (the install id), in
 /// the app's support folder.
 class ZiFileStore {
   ZiFileStore([Future<Directory> Function()? dir]) : _dir = dir ?? _defaultDir;

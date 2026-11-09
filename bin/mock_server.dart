@@ -3,20 +3,22 @@
 //
 //   dart run zehn_intelligence:mock_server [--port 8787]
 //
-// Console side: POST /v1/installs, POST /v1/turns,
-// POST /v1/turns/{id}/tool-results, GET /v1/suggestions (with the chat
-// settings). Customer side, under /customer: GET /cinematica/ (public) and
-// GET /loyalty/cards/my (needs `Authorization: Bearer demo`). Every request is
-// logged as one line.
+// Console side: GET /v1/config, GET /v1/suggestions, POST /v1/turns
+// (questions and Confirm/Cancel taps), POST /v1/turns/{id}/tool-results.
+// Customer side, under /customer: GET /cinematica/ (public),
+// GET /loyalty/cards/my (needs `Authorization: Bearer demo`) and
+// POST /parking/reservations. Every request is logged as one line.
 //
 // Like the real backend, it builds each tool call's customer request
-// (`client_api_request.http`) and sends each card's template with the card
-// (`mount_component.surface`), from an app description: the built-in one, or
+// (`client_api_request.request`), sends each card's template with the card
+// (`mount_component.surface`), fills routes, and asks before writes with a
+// `confirm` card, from an app description: the built-in one, or
 // `--app <file.json>` with a real app's endpoints, cards and theme.
 //
 // Ask about the cinema ("kino", "cinema", "кино") for a tool call and a
 // console-made card; about "card"/"karta"/"карта" for a login-only tool;
-// "loyalty" opens an app route. Anything else is echoed.
+// "loyalty" opens an app route; "reserve"/"parking"/"bron" asks to confirm a
+// write. Anything else is echoed.
 
 import 'dart:async';
 import 'dart:convert';
@@ -50,11 +52,16 @@ Future<void> main(List<String> args) async {
 final _turns = <String, _PendingTurn>{};
 var _nextTurn = 0;
 
+/// Confirm cards not answered yet, by action id.
+final _actions = <String, _PendingTurn>{};
+var _nextAction = 0;
+
 class _PendingTurn {
-  _PendingTurn(this.language, this.tool);
+  _PendingTurn(this.language, this.tool, [this.args = const {}]);
 
   final String language;
   final String tool;
+  final Map<String, Object?> args;
 }
 
 Future<void> _handle(HttpRequest req, int port) async {
@@ -62,22 +69,29 @@ Future<void> _handle(HttpRequest req, int port) async {
   final body = await utf8.decoder.bind(req).join();
   final json = body.isEmpty ? null : jsonDecode(body);
   var status = 200;
+  if (path.startsWith('/v1/') && req.headers.value('x-zi-spec-version') != null) {
+    stdout.writeln('  warning: X-ZI-Spec-Version sent; the real server would treat this as an old build');
+  }
   try {
-    if (req.method == 'POST' && path == '/v1/installs') {
-      await _json(req, 200, {'token': 'install-token', 'token_type': 'Bearer', 'expires_in': 3600});
+    if (req.method == 'GET' && path == '/v1/config') {
+      await _json(req, 200, _config());
     } else if (req.method == 'GET' && path == '/v1/suggestions') {
       final language = req.uri.queryParameters['language'] ?? 'en';
-      await _json(req, 200, {'suggestions': _starters[language] ?? _starters['en'], 'chat': _chat(language)});
+      await _json(req, 200, {'suggestions': _starters[language] ?? _starters['en']});
     } else if (req.method == 'POST' && path == '/v1/turns') {
-      if (!_signedIn(req)) {
+      if (!_known(req)) {
         status = 401;
-        await _json(req, 401, {'code': 'user_token_required', 'message': 'No token'});
+        await _json(req, 401, {'code': 'user_token_required', 'message': 'No user token and no install id'});
       } else {
         await _startTurn(req, (json as Map).cast<String, Object?>());
       }
     } else if (req.method == 'POST' && path.startsWith('/v1/turns/') && path.endsWith('/tool-results')) {
       final id = path.split('/')[3];
       await _results(req, id, (json as Map).cast<String, Object?>());
+    } else if (req.method == 'POST' && path == '/customer/parking/reservations') {
+      final zone = json is Map ? json['zone_id'] : null;
+      await _json(req, 201, {'id': 'r_${DateTime.now().millisecondsSinceEpoch % 100000}', 'zone_id': zone, 'status': 'reserved'});
+      status = 201;
     } else if (req.method == 'GET' && path == '/customer/cinematica/') {
       await _json(req, 200, _cinema);
     } else if (req.method == 'GET' && path == '/customer/loyalty/cards/my') {
@@ -96,7 +110,9 @@ Future<void> _handle(HttpRequest req, int port) async {
   }
 }
 
-bool _signedIn(HttpRequest req) => (req.headers.value('authorization') ?? '').startsWith('Bearer ');
+/// A user token, or at least this install's id.
+bool _known(HttpRequest req) =>
+    (req.headers.value('authorization') ?? '').startsWith('Bearer ') || (req.headers.value('x-zi-install-id') ?? '').isNotEmpty;
 
 Future<void> _json(HttpRequest req, int status, Object? body) async {
   req.response
@@ -136,6 +152,41 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
   final started = ('turn.started', <String, Object?>{'conversation_id': conversation, 'conversation_new': body['conversation_id'] == null});
   final spoken = (body['input'] as Map?)?['type'] == 'audio';
   final transcript = [if (spoken) ('transcript', <String, Object?>{'text': 'kino haqida', 'language': language})];
+  final input = body['input'];
+  if (input is Map && input['type'] == 'action') {
+    await _answerAction(req, turnId, started, input.cast<String, Object?>(), language);
+    return;
+  }
+  if (RegExp('reserve|parking|bron|брон').hasMatch(text) && _map(_app['tools']).containsKey('parking.reserve')) {
+    final args = <String, Object?>{'zone_id': 12, 'hours': 2};
+    final actionId = 'act_${++_nextAction}';
+    _actions[actionId] = _PendingTurn(language, 'parking.reserve', args);
+    await _sse(req, turnId, [
+      started,
+      ('text.delta', {'text': _w(language, 'B1 zonada 2 soatga joy band qilaymi?', 'Забронировать место в зоне B1 на 2 часа?', 'Reserve a place in zone B1 for 2 hours?')}),
+      (
+        'confirm',
+        {
+          'call_id': 'c_1',
+          'action_id': actionId,
+          'tool': 'parking.reserve',
+          'method': 'POST',
+          'surface': jsonDecode(_confirmSurface),
+          'props': {
+            ...args,
+            'rows': [
+              {'label': _w(language, 'Zona', 'Зона', 'Zone'), 'value': 'B1'},
+              {'label': _w(language, 'Soat', 'Часы', 'Hours'), 'value': '2'},
+            ],
+          },
+          'confirm_label': _w(language, 'Band qilish', 'Забронировать', 'Reserve'),
+          'expires_in': 600,
+        },
+      ),
+      ('done', {'outcome': 'answered'}),
+    ]);
+    return;
+  }
 
   String? tool;
   if (RegExp('kino|cinema|кино').hasMatch(text)) tool = 'cinemas.list';
@@ -166,11 +217,57 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
     started,
     ...transcript,
     ('text.delta', {'text': _w(language, 'Bir daqiqa… ', 'Минутку… ', 'One moment… ')}),
-    ('client_api_request', {'call_id': 'c_1', 'tool': tool, 'args': <String, Object?>{}, 'http': _http(tool, const {}, language)}),
+    ('client_api_request', {'call_id': 'c_1', 'tool': tool, 'args': <String, Object?>{}, 'request': _request(tool, const {}, language)}),
     (
       'turn.paused',
       {
         'call_ids': ['c_1'],
+        'deadline': DateTime.now().toUtc().add(const Duration(seconds: 60)).toIso8601String(),
+        'expires_in': 60,
+        'max_result_bytes': 32768,
+      },
+    ),
+  ]);
+}
+
+/// A Confirm or Cancel tap on a confirm card.
+Future<void> _answerAction(
+  HttpRequest req,
+  String turnId,
+  (String, Map<String, Object?>) started,
+  Map<String, Object?> input,
+  String language,
+) async {
+  final action = _actions.remove(input['action_id']);
+  if (action == null) {
+    await _json(req, 409, {'code': 'action_used', 'message': 'This action was already answered.'});
+    return;
+  }
+  if (input['decision'] != 'confirm') {
+    await _sse(req, turnId, [
+      started,
+      ('text.delta', {'text': _w(language, 'Bekor qilindi.', 'Отменено.', 'Cancelled.')}),
+      ('done', {'outcome': 'answered'}),
+    ]);
+    return;
+  }
+  _turns[turnId] = _PendingTurn(language, action.tool, action.args);
+  await _sse(req, turnId, [
+    started,
+    (
+      'client_api_request',
+      {
+        'call_id': 'c_2',
+        'tool': action.tool,
+        'args': action.args,
+        'action_id': input['action_id'],
+        'request': _request(action.tool, action.args, language),
+      },
+    ),
+    (
+      'turn.paused',
+      {
+        'call_ids': ['c_2'],
         'deadline': DateTime.now().toUtc().add(const Duration(seconds: 60)).toIso8601String(),
         'expires_in': 60,
         'max_result_bytes': 32768,
@@ -194,6 +291,14 @@ Future<void> _results(HttpRequest req, String turnId, Map<String, Object?> body)
     return;
   }
   final data = first['data'];
+  if (pending?.tool == 'parking.reserve') {
+    final id = data is Map ? data['id'] : null;
+    await _sse(req, turnId, [
+      ('text.delta', {'text': _w(language, 'Joy band qilindi: `$id`.', 'Место забронировано: `$id`.', 'Your place is reserved: `$id`.')}),
+      ('done', {'outcome': 'answered'}),
+    ]);
+    return;
+  }
   if (pending?.tool == 'loyalty_cards.get') {
     final points = data is Map ? data['current_points'] : null;
     await _sse(req, turnId, [
@@ -224,17 +329,10 @@ Future<void> _results(HttpRequest req, String turnId, Map<String, Object?> body)
 
 Map<String, Object?> _map(Object? v) => v is Map ? v.cast<String, Object?>() : const {};
 
-/// A `{language: text}` map, or plain text, in [language].
-String? _pick(Object? v, String language) {
-  if (v is String) return v;
-  if (v is! Map) return null;
-  final text = v[language] ?? v['en'] ?? (v.values.isEmpty ? null : v.values.first);
-  return text is String ? text : null;
-}
-
 /// The customer request for one call, as the backend builds it: path
-/// parameters filled, query, headers, body, login and result rule.
-Map<String, Object?> _http(String tool, Map<String, Object?> args, String language) {
+/// parameters filled, query and body. The extra fields (headers, auth,
+/// result, base_url) are what the SDK also understands.
+Map<String, Object?> _request(String tool, Map<String, Object?> args, String language) {
   final api = _map(_app['api']);
   final spec = _map(_map(_app['tools'])[tool]);
   var path = spec['path'] as String? ?? '/';
@@ -259,8 +357,6 @@ Map<String, Object?> _http(String tool, Map<String, Object?> args, String langua
     for (final e in {..._map(api['headers']), ..._map(spec['headers'])}.entries) e.key: '${e.value}'.replaceAll('{language}', language),
   };
   final auth = _map(api['auth']);
-  final confirm = spec['confirm'];
-  final title = confirm is Map ? _pick(confirm['title'], language) : null;
   return {
     'method': spec['method'] ?? 'GET',
     'path': path,
@@ -271,38 +367,36 @@ Map<String, Object?> _http(String tool, Map<String, Object?> args, String langua
     'auth_header': ?auth['header'],
     'auth_scheme': ?auth['scheme'],
     'result': ?spec['result'],
-    if (confirm is bool) 'confirm': confirm,
-    if (confirm is Map) 'confirm': {'title': ?title?.replaceAllMapped(RegExp(r'\{(\w+)\}'), (m) => '${args[m[1]] ?? ''}')},
     'base_url': ?api['base_url'],
   };
 }
 
-/// A card or route with what the phone needs to show it.
+/// A card with its template, or a route already filled from the props.
 Map<String, Object?> _mount(String callId, String component, Map<String, Object?> props) {
   final def = _map(_map(_app['components'])[component]);
+  final route = def['route'];
   return {
     'call_id': callId,
     'component': component,
     'kind': def['kind'] ?? 'inline',
     'props': props,
     'surface': ?def['surface'],
-    'route': ?def['route'],
+    if (route is String)
+      'route': route.replaceAllMapped(RegExp(r'\{(\w+)\}'), (m) => Uri.encodeComponent('${props[m[1]] ?? ''}')),
   };
 }
 
-/// The `chat` field of `GET /v1/suggestions`.
-Map<String, Object?> _chat(String language) {
-  final copy = _map(_app['copy']);
-  return {
-    'services': ?_app['services'],
-    'languages': ?_app['languages'],
-    'default_language': ?_app['default_language'],
-    'theme': ?_app['theme'],
-    'welcome_title': ?_pick(copy['welcome_title'], language),
-    'welcome_subtitle': ?_pick(copy['welcome_subtitle'], language),
-    'spec_version': ?_app['spec_version'],
-  };
-}
+/// `GET /v1/config`.
+Map<String, Object?> _config() => {
+  'spec_version': _app['spec_version'] ?? '1.0.0',
+  'assistant_name': ?_app['assistant_name'],
+  'app_name': ?_app['app_name'],
+  'languages': _app['languages'] ?? ['uz', 'ru', 'en'],
+  'default_language': _app['default_language'] ?? 'uz',
+  'services': _app['services'] ?? ['llm'],
+  'theme': _app['theme'] ?? const <String, Object?>{},
+  'copy': _app['copy'] ?? const <String, Object?>{},
+};
 
 String _w(String language, String uz, String ru, String en) => switch (language) {
   'ru' => ru,
@@ -340,6 +434,14 @@ Map<String, Object?> _builtInApp(int port) => {
       'auth': true,
       'result': {'fields': ['card_number', 'current_points', 'tier']},
     },
+    'parking.reserve': {
+      'method': 'POST',
+      'path': '/parking/reservations',
+      'params': [
+        {'name': 'zone_id', 'in': 'body'},
+        {'name': 'hours', 'in': 'body', 'key': 'duration_hours'},
+      ],
+    },
   },
   'components': {
     'cinema_details': {'kind': 'inline', 'surface': {'createSurface': jsonDecode(_cinemaSurface)}},
@@ -352,5 +454,7 @@ final Map<String, Object?> _cinema = (jsonDecode(_data) as Map).cast<String, Obj
 
 // From spikes/dynamic_card_spike, with /cinema/ paths moved to the props root.
 const _cinemaSurface = r'''{"surfaceId": "cinema_details", "catalogId": "zehn.basic.v0", "root": "root", "components": [{"id": "root", "component": "Box", "color": "surface", "radius": "card", "padding": 16, "child": "body"}, {"id": "body", "component": "Column", "gap": 16, "children": ["photo", "intro", "contacts", "now_header", "movies", "buy"]}, {"id": "photo", "component": "Image", "src": {"path": "/photo_url"}, "height": 170, "radius": "image"}, {"id": "intro", "component": "Column", "gap": 8, "children": ["chips", "name", "description"]}, {"id": "chips", "component": "Row", "gap": 8, "children": ["category", "floor"]}, {"id": "category", "component": "Chip", "icon": "theaters", "text": {"path": "/category_name"}, "visible": {"path": "/category_name"}}, {"id": "floor", "component": "Chip", "icon": "layers", "text": {"uz": "{/floor}-qavat", "ru": "Этаж {/floor}", "en": "Floor {/floor}"}}, {"id": "name", "component": "Text", "style": "display", "text": {"path": "/name"}}, {"id": "description", "component": "Text", "style": "body", "maxLines": 4, "text": {"path": "/description"}}, {"id": "contacts", "component": "Column", "gap": 0, "children": ["hours", "phone", "site"]}, {"id": "hours", "component": "InfoRow", "icon": "schedule", "text": {"path": "/working_hours"}}, {"id": "phone", "component": "InfoRow", "icon": "phone", "text": {"path": "/phone"}, "action": {"name": "open_url", "args": {"url": "tel:{/phone}"}}}, {"id": "site", "component": "InfoRow", "icon": "language", "text": {"path": "/website"}, "action": {"name": "open_url", "args": {"url": "https://{/website}"}}}, {"id": "now_header", "component": "Header", "icon": "movie", "title": {"uz": "Hozir namoyishda", "ru": "В прокате", "en": "Now Showing"}, "action": {"name": "ask", "args": {"text": {"uz": "Bugun qanday filmlar bor?", "ru": "Какие фильмы сегодня?", "en": "What's on today?"}}}}, {"id": "movies", "component": "Row", "gap": 10, "scroll": true, "children": {"componentId": "movie_card", "path": "/movies"}}, {"id": "movie_card", "component": "Column", "width": 136, "gap": 6, "children": ["movie_poster", "movie_title", "movie_genre", "movie_rating"], "action": {"name": "call_tool", "args": {"tool": "movies.get", "title": {"path": "title"}}}}, {"id": "movie_poster", "component": "Image", "src": {"path": "image"}, "height": 196, "radius": "image"}, {"id": "movie_title", "component": "Text", "style": "title", "maxLines": 2, "text": {"path": "title"}}, {"id": "movie_genre", "component": "Text", "style": "caption", "color": "muted", "maxLines": 1, "text": {"path": "genre"}}, {"id": "movie_rating", "component": "Chip", "text": {"path": "rating"}}, {"id": "buy", "component": "Button", "icon": "ticket", "label": {"uz": "Chipta sotib olish", "ru": "Купить билет", "en": "Buy Ticket"}, "action": {"name": "open_route", "args": {"route": "/explore/{/id}/tickets"}}}]}''';
+// The server's default confirm template (CARDS_FOR_MOBILE.md, section 5).
+const _confirmSurface = r'''{"createSurface": {"surfaceId": "zi_confirm", "catalogId": "zehn.basic.v0", "root": "root", "components": [{"id": "root", "component": "Box", "color": "surface", "radius": "card", "padding": 16, "child": "body"}, {"id": "body", "component": "Column", "gap": 12, "children": ["title", "rows"]}, {"id": "title", "component": "Text", "style": "title", "text": {"uz": "Tasdiqlaysizmi?", "ru": "Подтвердить?", "en": "Confirm this?"}}, {"id": "rows", "component": "Column", "gap": 8, "children": {"componentId": "row", "path": "/rows"}}, {"id": "row", "component": "Row", "gap": 12, "children": ["label", "value"]}, {"id": "label", "component": "Text", "style": "caption", "color": "muted", "flex": 1, "text": {"path": "label"}}, {"id": "value", "component": "Text", "style": "body", "text": {"path": "value"}}]}}''';
 const _theme = r'''{"font": "CeraPro", "colors": {"surface": "#FF19212F", "on_surface": "#E6FFFFFF", "muted": "#99FFFFFF", "chip": "#0DFFFFFF", "image_bg": "#08FFFFFF", "border": "#0DFFFFFF", "accent": "#FFBE7C6C", "on_accent": "#FFFFFFFF"}, "text": {"display": {"size": 30, "weight": 500, "height": 1.15}, "title": {"size": 17, "weight": 500, "height": 1.25}, "body": {"size": 15, "weight": 400, "height": 1.4}, "caption": {"size": 13, "weight": 400, "height": 1.3}}, "radius": {"card": 24, "image": 20, "chip": 100, "button": 16}}''';
 const _data = r'''{"id": 1, "name": "Cinematica", "floor": "4", "category_name": {"uz": "Kinoteatr", "ru": "Кинотеатр", "en": "Cinema"}, "description": {"uz": "Tashkent City Mall'dagi zamonaviy kinoteatr: 8 ta zal, IMAX va qulay o'rindiqlar.", "ru": "Современный кинотеатр в Tashkent City Mall: 8 залов, IMAX и удобные кресла.", "en": "A modern cinema in Tashkent City Mall: 8 halls, IMAX and comfortable seats."}, "working_hours": {"uz": "Har kuni 10:00 – 02:00", "ru": "Ежедневно 10:00 – 02:00", "en": "Every day 10:00 – 02:00"}, "phone": "+998 71 000 00 00", "website": "cinematica.example", "photo_url": "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=800&q=80", "movies": [{"title": "Michael", "genre": "Drama, Biography", "rating": "13+", "image": "https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=500&q=80"}, {"title": "F1: The Movie", "genre": "Action, Drama, Sport", "rating": "13+", "image": "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=500&q=80"}, {"title": "The Fantastic Four: First Steps", "genre": "Action", "rating": "13+", "image": "https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=500&q=80"}]}''';

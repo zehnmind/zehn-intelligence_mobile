@@ -21,13 +21,10 @@ const ziDefaultConsoleUrl = 'https://zi-console-api.zehnmind.com';
 
 /// Where the SDK connects and with which app key.
 class ZiInitConfig {
-  const ZiInitConfig({required this.appKey, required this.consoleUrl, this.specVersion});
+  const ZiInitConfig({required this.appKey, required this.consoleUrl});
 
   final String appKey;
   final Uri consoleUrl;
-
-  /// From the config file, until the chat settings say otherwise.
-  final String? specVersion;
 }
 
 /// The first that applies: the argument, the config file, `--dart-define`,
@@ -63,7 +60,6 @@ ZiInitConfig resolveInitConfig({
   return ZiInitConfig(
     appKey: key,
     consoleUrl: url.host.isEmpty ? Uri.parse(ziDefaultConsoleUrl) : url,
-    specVersion: pick(['zi_spec_version'], ['zi_spec_version']),
   );
 }
 
@@ -72,21 +68,23 @@ class ZiRuntime {
   ZiRuntime._({
     required this.api,
     required this.info,
-    required ZiFileStore store,
     required this.openRoute,
     required ZiTokenSource tokens,
     required this.builders,
-  }) : _store = store,
-       _tokens = tokens;
+  }) : _tokens = tokens;
 
   static ZiRuntime? instance;
 
   final ZiApiClient api;
   final ZiClientInfo info;
-  final ZiFileStore _store;
 
-  /// From the last `GET /v1/suggestions`; the SDK's defaults until then.
+  /// From the last good `GET /v1/config`; the SDK's defaults until then.
   final ValueNotifier<ZiChatSettings> settings = ValueNotifier(const ZiChatSettings());
+
+  /// False once the console says nothing is published (`spec_not_found`):
+  /// the assistant stays hidden.
+  final ValueNotifier<bool> available = ValueNotifier(true);
+  Future<void>? _configLoad;
 
   /// Set once in [create]: the cubit reads the runtime's language and tokens.
   late final ZiChatCubit chat;
@@ -117,7 +115,7 @@ class ZiRuntime {
     ZiFileStore? store,
   }) async {
     final files = store ?? ZiFileStore();
-    final api = ZiApiClient(baseUrl: config.consoleUrl, info: info)..specVersion = config.specVersion;
+    final api = ZiApiClient(baseUrl: config.consoleUrl, info: info)..installId = await loadInstallId(files);
 
     if (client != null && (accessToken != null || onUnauthorized != null)) {
       debugPrint('zehn_intelligence: both client and accessToken/onUnauthorized were given; the client is used');
@@ -134,9 +132,8 @@ class ZiRuntime {
     final runtime = ZiRuntime._(
       api: api,
       info: info,
-      store: files,
       openRoute: openRoute,
-      tokens: userToken != null ? CallbackTokenSource(userToken) : InstallTokenSource(api: api, store: files),
+      tokens: userToken != null ? CallbackTokenSource(userToken) : const AnonymousTokenSource(),
       builders: builders,
     );
     final turns = ZiTurnClient(api: api, tokens: () => runtime._tokens);
@@ -148,9 +145,25 @@ class ZiRuntime {
       language: () => runtime.language,
       starterSuggestions: runtime._starterSuggestions,
     );
-    // Data-changing tools ask the user in the chat first.
-    tools.confirmer = runtime.chat.confirm;
+    // A write is made only for an action the user confirmed in the chat.
+    tools.takeConfirmed = runtime.chat.takeConfirmed;
+    unawaited(runtime.loadConfig());
     return runtime;
+  }
+
+  /// Asks for `GET /v1/config`; calls made while one is under way share it.
+  /// Never throws: a failure keeps the settings the SDK has.
+  Future<void> loadConfig() => _configLoad ??= _fetchConfig().whenComplete(() => _configLoad = null);
+
+  Future<void> _fetchConfig() async {
+    try {
+      settings.value = ZiChatSettings.fromJson(await api.getJson('/v1/config'));
+      available.value = true;
+    } on ZiApiException catch (e) {
+      if (e.code == 'spec_not_found') available.value = false;
+    } on Object catch (e) {
+      debugPrint('zehn_intelligence: the chat settings could not be read: $e');
+    }
   }
 
   /// The app's choice ([ZehnIntelligence.setLanguage]), else the phone's if
@@ -167,9 +180,10 @@ class ZiRuntime {
 
   set language(String value) => _language = value;
 
-  /// A Zehn user token from the app's backend; null goes back to the install token.
+  /// A Zehn user token from the app's backend; null goes back to no token
+  /// (the user is known by the install id).
   void setUserToken(FutureOr<String?> Function()? fetch) {
-    _tokens = fetch != null ? CallbackTokenSource(fetch) : InstallTokenSource(api: api, store: _store);
+    _tokens = fetch != null ? CallbackTokenSource(fetch) : const AnonymousTokenSource();
   }
 
   /// Sign-out: forget the conversation and the user's token.
@@ -178,7 +192,13 @@ class ZiRuntime {
     setUserToken(null);
   }
 
-  Future<void> openChat(BuildContext context, {String? title}) => ZiChatSheet.show(
+  Future<void> openChat(BuildContext context, {String? title}) {
+    if (!available.value) {
+      debugPrint('zehn_intelligence: nothing is published for this app yet; the chat stays closed');
+      return Future.value();
+    }
+    unawaited(loadConfig());
+    return ZiChatSheet.show(
     context,
     cubit: chat,
     settings: settings,
@@ -187,21 +207,18 @@ class ZiRuntime {
     openRoute: openRoute,
     title: title,
   );
+  }
 
   Future<List<String>> _starterSuggestions() async {
-    Future<Object?> get(String token) =>
+    Future<Object?> get(String? token) =>
         api.getJson('/v1/suggestions', query: {'language': language}, userToken: token);
     Object? body;
     try {
       body = await get(await _tokens.token());
     } on ZiApiException catch (e) {
-      if (e.code != 'user_token_expired' && e.code != 'user_token_required') rethrow;
-      body = await get(await _tokens.refresh());
-    }
-    if (body is Map && body['chat'] is Map) {
-      final next = ZiChatSettings.fromJson(body['chat']);
-      settings.value = next;
-      if (next.specVersion != null) api.specVersion = next.specVersion;
+      final fresh = e.code == 'user_token_expired' || e.code == 'user_token_required' ? await _tokens.refresh() : null;
+      if (fresh == null) rethrow;
+      body = await get(fresh);
     }
     final list = body is Map ? body['suggestions'] : null;
     return list is List ? [for (final s in list) if (s is String) s] : const [];

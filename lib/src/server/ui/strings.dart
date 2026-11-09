@@ -29,11 +29,11 @@ class ZiStrings {
   String get tryAsking => _w['tryAsking']!;
   String get typeMessage => _w['typeMessage']!;
   String get thinking => _w['thinking']!;
-  String get allow => _w['allow']!;
+  String get confirm => _w['confirm']!;
   String get decline => _w['decline']!;
   String get confirmDefault => _w['confirmDefault']!;
-  String get allowed => _w['allowed']!;
-  String get declined => _w['declined']!;
+  String get confirmed => _w['confirmed']!;
+  String get cancelled => _w['cancelled']!;
   String get expired => _w['expired']!;
 
   /// Not translated: the brand line under the title.
@@ -52,12 +52,12 @@ class ZiStrings {
   }]!;
 
   static const _uz = {
-    'allow': 'Ruxsat berish',
+    'confirm': 'Tasdiqlash',
     'decline': 'Bekor qilish',
-    'confirmDefault': 'Bu amalga ruxsat berasizmi?',
-    'allowed': 'Ruxsat berildi',
-    'declined': 'Bekor qilindi',
-    'expired': 'Vaqt tugadi',
+    'confirmDefault': 'Tasdiqlaysizmi?',
+    'confirmed': 'Tasdiqlandi',
+    'cancelled': 'Bekor qilindi',
+    'expired': 'Muddati o‘tdi',
     'chat': 'Suhbat',
     'back': 'Orqaga',
     'welcomeTitle': 'Qanday yordam bera olaman?',
@@ -88,12 +88,12 @@ class ZiStrings {
   };
 
   static const _ru = {
-    'allow': 'Разрешить',
+    'confirm': 'Подтвердить',
     'decline': 'Отмена',
-    'confirmDefault': 'Разрешить это действие?',
-    'allowed': 'Разрешено',
-    'declined': 'Отменено',
-    'expired': 'Время вышло',
+    'confirmDefault': 'Подтвердить?',
+    'confirmed': 'Подтверждено',
+    'cancelled': 'Отменено',
+    'expired': 'Истекло',
     'chat': 'Чат',
     'back': 'Назад',
     'welcomeTitle': 'Чем могу помочь?',
@@ -124,12 +124,12 @@ class ZiStrings {
   };
 
   static const _en = {
-    'allow': 'Allow',
+    'confirm': 'Confirm',
     'decline': 'Cancel',
-    'confirmDefault': 'Allow this action?',
-    'allowed': 'Allowed',
-    'declined': 'Cancelled',
-    'expired': 'Timed out',
+    'confirmDefault': 'Confirm this?',
+    'confirmed': 'Confirmed',
+    'cancelled': 'Cancelled',
+    'expired': 'Expired',
     'chat': 'Chat',
     'back': 'Back',
     'welcomeTitle': 'How can I help you?',

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/proxy/proxy_executor.dart';
@@ -8,8 +6,8 @@ import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiToolError;
 
 import '../../support/fake_server.dart';
 
-ClientApiRequest call(String id, String tool, {Map<String, Object?> args = const {}, Map<String, Object?>? http}) =>
-    ClientApiRequest(callId: id, tool: tool, args: args, http: http);
+ClientApiRequest call(String id, String tool, {Map<String, Object?> args = const {}, Map<String, Object?>? http, String? actionId}) =>
+    ClientApiRequest(callId: id, tool: tool, args: args, request: http, actionId: actionId);
 
 void main() {
   late FakeServer server;
@@ -90,87 +88,49 @@ void main() {
       server.on('POST', '/parking/reservations', (req, _) => respondJson(req, 201, {'id': 'r1'}));
     });
 
-    Map<String, Object?> reserve({Object? confirm}) => {
+    Map<String, Object?> reserve() => {
       'method': 'POST',
       'path': '/parking/reservations',
       'body': {'zone_id': 7},
       'base_url': server.url.toString(),
-      'confirm': ?confirm,
     };
 
-    ZiToolRunner asking(ZiConfirmer? confirmer, {Duration timeout = const Duration(seconds: 20)}) =>
-        ZiToolRunner(handlers: const {}, proxy: ZiProxyExecutor(), timeout: timeout, confirmMargin: Duration.zero)
-          ..confirmer = confirmer;
+    ZiToolRunner confirmed(Set<String> actions) =>
+        ZiToolRunner(handlers: const {}, proxy: ZiProxyExecutor())..takeConfirmed = actions.remove;
 
-    test('a write asks first and runs when allowed', () async {
-      final asked = <ZiConfirmRequest>[];
-      final results = await asking((r) async {
-        asked.add(r);
-        return true;
-      }).runAll([call('c1', 'parking.reserve', args: {'zone_id': 7}, http: reserve())]);
-      expect(asked.single.callId, 'c1');
-      expect(asked.single.tool, 'parking.reserve');
-      expect(asked.single.args, {'zone_id': 7});
-      expect(asked.single.title, isNull);
+    test('a write runs after the user confirmed its action', () async {
+      final results = await confirmed({'a1'}).runAll([call('c1', 'parking.reserve', http: reserve(), actionId: 'a1')]);
       expect(results.single.data, {'id': 'r1'});
       expect(server.requests.single.method, 'POST');
     });
 
-    test('the question is the one the server wrote', () async {
-      final asked = <ZiConfirmRequest>[];
-      await asking((r) async {
-        asked.add(r);
-        return false;
-      }).runAll([call('c1', 'parking.reserve', http: reserve(confirm: {'title': 'Забронировать место в зоне 7?'}))]);
-      expect(asked.single.title, 'Забронировать место в зоне 7?');
-    });
-
-    test('a write the server marked confirm: false runs without asking', () async {
-      var asked = 0;
-      final results = await asking((r) async {
-        asked++;
-        return false;
-      }).runAll([call('c1', 'parking.reserve', http: reserve(confirm: false))]);
-      expect(asked, 0);
-      expect(results.single.ok, isTrue);
-    });
-
-    test('a declined write is user_declined and makes no request', () async {
-      final results = await asking((r) async => false).runAll([call('c1', 'parking.reserve', http: reserve())]);
-      expect(results.single.errorCode, 'user_declined');
+    test('a write the user did not confirm is not_confirmed and makes no request', () async {
+      final results = await confirmed({'a1'}).runAll([
+        call('c1', 'parking.reserve', http: reserve()),
+        call('c2', 'parking.reserve', http: reserve(), actionId: 'other'),
+      ]);
+      expect(results.map((r) => r.errorCode), ['not_confirmed', 'not_confirmed']);
       expect(server.requests, isEmpty);
     });
 
-    test('a write with no way to ask is user_declined', () async {
-      final results = await asking(null).runAll([call('c1', 'parking.reserve', http: reserve())]);
-      expect(results.single.errorCode, 'user_declined');
-      expect(server.requests, isEmpty);
+    test('one confirmation allows one request', () async {
+      final runner = confirmed({'a1'});
+      await runner.runAll([call('c1', 'parking.reserve', http: reserve(), actionId: 'a1')]);
+      final again = await runner.runAll([call('c2', 'parking.reserve', http: reserve(), actionId: 'a1')]);
+      expect(again.single.errorCode, 'not_confirmed');
+      expect(server.requests, hasLength(1));
     });
 
-    test('waiting for the user does not count toward the tool timeout', () async {
-      final results = await asking((r) async {
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-        return true;
-      }, timeout: const Duration(milliseconds: 150)).runAll([call('c1', 'parking.reserve', http: reserve())]);
-      expect(results.single.ok, isTrue);
+    test('without a way to check, a write is not_confirmed', () async {
+      final results = await ZiToolRunner(handlers: const {}, proxy: ZiProxyExecutor())
+          .runAll([call('c1', 'parking.reserve', http: reserve(), actionId: 'a1')]);
+      expect(results.single.errorCode, 'not_confirmed');
     });
 
-    test('no answer before the deadline is user_declined', () async {
-      final never = Completer<bool>();
-      final results = await asking((r) => never.future)
-          .runAll([call('c1', 'parking.reserve', http: reserve())], deadline: DateTime.now().add(const Duration(milliseconds: 200)))
-          .timeout(const Duration(seconds: 2));
-      expect(results.single.errorCode, 'user_declined');
-      expect(server.requests, isEmpty);
-    });
-
-    test('reads never ask', () async {
-      var asked = 0;
-      await asking((r) async {
-        asked++;
-        return true;
-      }).runAll([call('c1', 'locations.get', http: venue())]);
-      expect(asked, 0);
+    test('reads and in-app handlers need no confirmation', () async {
+      final runner = ZiToolRunner(handlers: {'app.write': (args) async => {'done': true}}, proxy: ZiProxyExecutor());
+      final results = await runner.runAll([call('c1', 'locations.get', http: venue()), call('c2', 'app.write')]);
+      expect(results.map((r) => r.ok), [true, true]);
     });
   });
 }

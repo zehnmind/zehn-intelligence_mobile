@@ -31,6 +31,9 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   static const maxTextLength = 4000;
   static const _conversationErrors = {'conversation_not_found', 'conversation_spec_changed', 'conversation_full'};
 
+  /// The card can no longer be answered.
+  static const _actionErrors = {'action_used', 'action_expired', 'action_not_found'};
+
   final ZiTurnClient _turns;
   final ZiToolRunner _tools;
   final ZiAudioQueue _audio;
@@ -40,7 +43,10 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   final StreamController<ZiComponentItem> _opens = StreamController.broadcast();
 
   StreamSubscription<TurnEvent>? _sub;
-  final Map<String, Completer<bool>> _questions = {};
+
+  /// Actions the user confirmed whose write has not been made yet.
+  final Set<String> _confirmed = {};
+  final Map<String, Timer> _expiry = {};
   Completer<TurnEvent?>? _leg;
   TurnInput? _last;
   int _generation = 0;
@@ -96,38 +102,55 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     }
   }
 
-  /// Shows the question in the chat; completes with the user's answer
-  /// ([answerConfirmation]), or false if the chat is reset or the round ends
-  /// first. Given to the tool runner as its confirmer.
-  Future<bool> confirm(ZiConfirmRequest request) {
-    if (isClosed) return Future.value(false);
-    _questions[request.callId]?.complete(false);
-    final answer = _questions[request.callId] = Completer<bool>();
-    _emit(state.copyWith(items: [...state.items, ZiConfirmItem(request.callId, request.title)]));
-    return answer.future;
+  /// The user's tap on a pending confirm card: a new turn with the
+  /// decision. Only the first tap counts; an expired card sends nothing.
+  Future<void> decide(String actionId, {required bool confirm}) async {
+    if (state.busy || isClosed) return;
+    final card = state.items.whereType<ZiConfirmItem>().where((c) => c.actionId == actionId).firstOrNull;
+    if (card == null || card.status != ZiConfirmStatus.pending) return;
+    _expiry.remove(actionId)?.cancel();
+    _setStatus(actionId, confirm ? ZiConfirmStatus.confirmed : ZiConfirmStatus.cancelled);
+    if (confirm) _confirmed.add(actionId);
+    await _audio.stop();
+    final input = TurnInput.action(
+      conversationId: state.conversationId,
+      actionId: actionId,
+      confirm: confirm,
+      language: _language(),
+      utcOffsetMinutes: _utcOffset(),
+    );
+    _last = input;
+    _emit(state.copyWith(busy: true, suggestions: const []));
+    await _run(input, _generation);
   }
 
-  /// The user's yes or no. A second answer is ignored.
-  void answerConfirmation(String callId, {required bool allow}) {
-    final answer = _questions.remove(callId);
-    if (answer == null || answer.isCompleted) return;
-    answer.complete(allow);
-    _setStatus(callId, allow ? ZiConfirmStatus.allowed : ZiConfirmStatus.declined);
+  /// True, once, for an action the user confirmed: the tool runner asks
+  /// before it makes a write.
+  bool takeConfirmed(String actionId) => _confirmed.remove(actionId);
+
+  void _showConfirm(ConfirmEvent event) {
+    if (state.items.any((i) => i is ZiConfirmItem && i.actionId == event.actionId)) return;
+    final card = ZiConfirmItem(
+      actionId: event.actionId,
+      tool: event.tool,
+      method: event.method,
+      surface: event.surface,
+      data: event.props,
+      label: event.confirmLabel,
+    );
+    _emit(state.copyWith(items: [...state.items, card]));
+    _expiry[event.actionId]?.cancel();
+    _expiry[event.actionId] = Timer(event.expiresIn, () {
+      _expiry.remove(event.actionId);
+      _setStatus(event.actionId, ZiConfirmStatus.expired, onlyPending: true);
+    });
   }
 
-  /// Questions nobody answered in time.
-  void _expireQuestions() {
-    for (final callId in [..._questions.keys]) {
-      _questions.remove(callId)?.complete(false);
-      _setStatus(callId, ZiConfirmStatus.expired);
-    }
-  }
-
-  void _setStatus(String callId, ZiConfirmStatus status) {
+  void _setStatus(String actionId, ZiConfirmStatus status, {bool onlyPending = false}) {
     _emit(state.copyWith(items: [
       for (final item in state.items)
-        item is ZiConfirmItem && item.callId == callId && item.status == ZiConfirmStatus.pending
-            ? ZiConfirmItem(item.callId, item.title, status: status)
+        item is ZiConfirmItem && item.actionId == actionId && (!onlyPending || item.status == ZiConfirmStatus.pending)
+            ? item.withStatus(status)
             : item,
     ]));
   }
@@ -141,12 +164,20 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   void reset() {
     _hangUp();
     _last = null;
+    _confirmed.clear();
+    for (final timer in _expiry.values) {
+      timer.cancel();
+    }
+    _expiry.clear();
     _emit(const ZiChatState());
   }
 
   @override
   Future<void> close() async {
     _hangUp();
+    for (final timer in _expiry.values) {
+      timer.cancel();
+    }
     await _opens.close();
     return super.close();
   }
@@ -185,8 +216,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       if (end == null || generation != _generation || isClosed) return;
       switch (end) {
         case TurnPaused():
-          final results = await _tools.runAll(calls, deadline: end.deadline);
-          _expireQuestions();
+          final results = await _tools.runAll(calls);
           if (generation != _generation || isClosed) return;
           stream = _turns.sendResults(end.turnId, results, deadline: end.deadline);
         case TurnDone():
@@ -194,6 +224,14 @@ class ZiChatCubit extends Cubit<ZiChatState> {
           return;
         case TurnFailed():
           final code = end.error.code;
+          final action = current.input['action_id'];
+          if (current.isAction && action is String && _actionErrors.contains(code)) {
+            // Already used, expired or unknown: the card says so.
+            _confirmed.remove(action);
+            _setStatus(action, ZiConfirmStatus.expired);
+            _emit(state.copyWith(busy: false));
+            return;
+          }
           if (!conversationRetried && _conversationErrors.contains(code)) {
             conversationRetried = true;
             current = current.withConversation(null);
@@ -231,6 +269,8 @@ class ZiChatCubit extends Cubit<ZiChatState> {
             calls.add(event);
           case MountComponent():
             _mount(event);
+          case ConfirmEvent():
+            _showConfirm(event);
           case AudioClip():
             _audio.add(event.seq, event.data, event.format);
           case SuggestionsEvent():
@@ -286,10 +326,6 @@ class ZiChatCubit extends Cubit<ZiChatState> {
 
   void _hangUp() {
     _generation++;
-    for (final answer in _questions.values) {
-      if (!answer.isCompleted) answer.complete(false);
-    }
-    _questions.clear();
     unawaited(_sub?.cancel());
     _sub = null;
     final leg = _leg;

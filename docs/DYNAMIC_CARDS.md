@@ -3,7 +3,8 @@
 How the console defines the cards the assistant shows in a customer's app, and what the
 backend must store, validate and send so the mobile SDK can draw them.
 
-Matches SDK `0.4.0` (`zehn_intelligence`, `main`). Related documents:
+Matches SDK `0.4.0` (`zehn_intelligence`, `main`) and the backend's answer,
+`CARDS_FOR_MOBILE.md` (branch `feat/proxy-sdk`). Related documents:
 
 - `docs/MOBILE_INTEGRATION.md`: the turn protocol (`/v1/turns`, SSE events, tool results).
 - `docs/design/server-proxy.md`: the full SDK design (tool requests, chat settings).
@@ -21,14 +22,15 @@ assistant shows inside the chat. The customer app has **no code** for it:
    `mount_component` event with the card's **name**, its **data** (usually a tool result) and
    its **template**.
 3. The SDK fills the template with the data and draws it with real native widgets, in the app's
-   colours and font. The theme (colours, font) comes with the chat's starter suggestions
-   (`GET /v1/suggestions`), each time the chat opens.
+   colours and font. The theme (colours, font) and welcome words come from `GET /v1/config`,
+   asked for at start-up and each time the chat opens.
 
 ```
 Console ──(templates, theme)──► Backend (stores and caches them)
                                    │
-   chat opens ───────────────────► │ ──GET /v1/suggestions → {suggestions, chat: {theme, …}}──► SDK
+   app starts, chat opens ───────► │ ──GET /v1/config → {theme, copy, services, …}──► SDK
    model wants a card ───────────► │ ──SSE: mount_component {component, props, surface}──► SDK draws it
+   model wants a write ──────────► │ ──SSE: confirm {action_id, surface, props}──► SDK asks the user
 ```
 
 The phone keeps no templates: a card published in the console works on the next message, with no
@@ -85,16 +87,16 @@ data: {"turn_id":"7b2e…","seq":9,"call_id":"m_1","component":"cinema_details",
 
 ```
 event: mount_component
-data: {"turn_id":"7b2e…","seq":10,"call_id":"m_2","component":"venue_page","kind":"route","props":{"id":"a1"},"route":"/venues/{id}"}
+data: {"turn_id":"7b2e…","seq":10,"call_id":"m_2","component":"venue_page","kind":"route","props":{"venue_id":"a1"},"route":"/venues/a1"}
 ```
 
 | Field | Rule |
 |---|---|
 | `component` | The component's name. The SDK uses it only to find an app widget with that name (below). |
 | `kind` | `inline`, `sheet` or `route`; anything else counts as `inline`. |
-| `props` | The data the template reads (section 6.2). Any JSON object. |
-| `surface` | `inline` and `sheet`: the component's template (section 6). |
-| `route` | `route`: an app route (a path the app's router understands, starting with `/`), not a URL. `{name}` placeholders are filled from the props, URL-encoded: `/venues/{id}` with `props: {"id": "a1"}` opens `/venues/a1`. |
+| `props` | The data the template reads (section 6.2). A list card gets `{"items": [...]}` and repeats a block over `/items`; a single card gets one object. |
+| `surface` | `inline` and `sheet`: the component's template (section 6). A `route` has none. |
+| `route` | `route`: an app route (a path the app's router understands, starting with `/`), not a URL. **Final**: the server fills `{name}` from the props and escapes it (`/venues/{venue_id}` → `/venues/a1`); the SDK opens it exactly as sent. |
 | `call_id` | Any unique string; history uses it. |
 
 What the SDK does:
@@ -116,24 +118,43 @@ nothing (unless the app has its own widget, below).
 (`ZehnIntelligence.registerComponent`), the SDK draws the app's widget instead of the template.
 The backend does not need to know; it sends the same event.
 
+### Confirm cards: the `confirm` event
+
+Before a write (POST, PUT, PATCH, DELETE), the server sends a card instead of the request:
+
+```
+event: confirm
+data: {"turn_id":"…","seq":7,"call_id":"c2","action_id":"6f1d…","tool":"parking.reserve","method":"POST","surface":{"createSurface":{…}},"props":{"zone_id":12,"rows":[{"label":"Zone","value":"B1"}]},"confirm_label":"Reserve","expires_in":600}
+```
+
+- The SDK draws `surface` with `props` like any card, then adds **Cancel** and **Confirm** under
+  it. Confirm's word is `confirm_label`, else the SDK's own; for `DELETE` it is in a warning
+  colour. Without a `surface` the SDK shows its own "Confirm this?".
+- One tap answers the card. It is a new turn:
+  `"input": {"type": "action", "action_id": "…", "decision": "confirm" | "cancel"}`.
+- After Confirm the server sends the write as a `client_api_request` carrying that
+  `action_id`. The SDK makes a write only for an action the user confirmed, once.
+- After `expires_in` seconds, or on `action_used` / `action_expired` / `action_not_found`, the
+  card shows as expired.
+
 ---
 
-## 5. Theme and welcome text: `GET /v1/suggestions`
+## 5. Theme and welcome text: `GET /v1/config`
 
-The SDK asks for starter suggestions each time the chat opens empty. The same answer carries the
-chat's settings in a `chat` field:
+The SDK asks for it in the background at start-up and again each time the chat opens:
 
 ```json
 {
-  "suggestions": ["Kinoteatr haqida aytib ber", "Kartamda nechta ball bor?"],
-  "chat": {
-    "theme": { "...": "see section 9" },
-    "welcome_title": "Qanday yordam bera olaman?",
-    "welcome_subtitle": "Do‘konlar, restoranlar, aksiyalar va boshqalar.",
-    "services": ["llm", "stt", "tts"],
-    "languages": ["uz", "ru", "en"],
-    "default_language": "uz",
-    "spec_version": "1.0.3"
+  "spec_version": "1.2.0",
+  "assistant_name": "Mall guide",
+  "app_name": "Tashkent City Mall",
+  "languages": ["uz", "ru", "en"],
+  "default_language": "uz",
+  "services": ["llm", "stt"],
+  "theme": { "...": "see section 9" },
+  "copy": {
+    "welcome_title": { "uz": "Qanday yordam bera olaman?", "ru": "Чем могу помочь?", "en": "How can I help you?" },
+    "welcome_subtitle": "Find stores, restaurants, offers and more."
   }
 }
 ```
@@ -141,13 +162,14 @@ chat's settings in a `chat` field:
 | Field | Meaning |
 |---|---|
 | `theme` | Section 9. Used by the chat and by every card. |
-| `welcome_title`, `welcome_subtitle` | The chat's first screen, already in the `language` of the request (section 10). |
+| `copy.welcome_title`, `copy.welcome_subtitle` | The chat's first screen (section 10). |
+| `assistant_name` | The chat's title. |
 | `services` | `stt` shows the mic, `tts` asks for spoken replies. |
 | `languages`, `default_language` | Which languages the assistant speaks; the SDK picks the phone's language if it is listed, else the default. |
-| `spec_version` | Optional; the SDK sends it back as `X-ZI-Spec-Version`. |
 
 Every field is optional: a missing one uses the SDK's own default (no mic, the SDK's colours and
-words). A `chat` field that is missing altogether keeps the settings the SDK already has.
+words). `404 spec_not_found` hides the assistant button. The SDK never sends
+`X-ZI-Spec-Version` back.
 
 ---
 
@@ -289,8 +311,8 @@ Careful with URLs: if the data already contains `https://`, use the path directl
 
 ## 9. Theme
 
-One per app, sent in `GET /v1/suggestions` → `chat.theme` (section 5). Cards and the chat itself
-both read it.
+One per app, sent in `GET /v1/config` → `theme` (section 5), always with every token. Cards and
+the chat itself both read it.
 
 ```json
 {
@@ -335,10 +357,10 @@ token can produce, for example, white text on a white card.
 
 ## 10. Welcome copy (optional)
 
-`chat.welcome_title` and `chat.welcome_subtitle` in `GET /v1/suggestions` (section 5): plain
-strings for the chat's first screen (the "How can I help you?" card), in the `language` the request
-asked for. Store them per language in the console and send the one asked for. Missing: the SDK's
-own neutral text.
+`copy.welcome_title` and `copy.welcome_subtitle` in `GET /v1/config` (section 5), for the chat's
+first screen (the "How can I help you?" card). Each is one string or a language map; from a map
+the SDK picks the user's language, else the app's default, else `en`, else the first. Missing:
+the SDK's own neutral text.
 
 ---
 
@@ -450,6 +472,7 @@ font, drawn natively.
 | Image fails to load, or `src` isn't `http(s)` | A small placeholder icon. |
 | Unknown action, or `open_url` with another scheme | The tap does nothing. |
 | `route` event without `route` (or not starting with `/`), and no app widget | Nothing happens. |
+| Write without a confirmed `action_id` | Not made; the model reads `not_confirmed`. |
 
 Nothing in a template can crash the app or run code. A tap can only open an app route, ask a
 question, or open an `https:`, `tel:` or `mailto:` link; images load only over `http(s)`.
@@ -465,11 +488,13 @@ dart run zehn_intelligence:mock_server --app path/to/app.json
 ```
 
 - Put the app's `api`, `tools`, `components`, `theme`, `copy` and `services` in the file (TCM's
-  is at `tcm_mobile-new-backend/zehn_test/bootstrap.json`). The mock sends each card's `surface`
-  in `mount_component`, each tool's built request in `client_api_request.http`, and the theme
-  and welcome text in `GET /v1/suggestions`, as the backend should.
+  is at `tcm_mobile-new-backend/zehn_test/bootstrap.json`). The mock serves `GET /v1/config`,
+  sends each card's `surface` in `mount_component`, each tool's built request in
+  `client_api_request.request`, fills routes, and asks before writes with a `confirm` card, as
+  the backend does.
 - The mock answers "cinema"/"kino"/"кино" questions with `cinemas.list` and mounts
-  `cinema_details`, and "loyalty" with the `loyalty_page` route.
+  `cinema_details`, "loyalty" with the `loyalty_page` route, and "reserve"/"parking" with a
+  confirm card for `parking.reserve` (built-in app only).
 - Run any app with `ZehnIntelligence.init(consoleUrl: Uri.parse('http://127.0.0.1:8787'), …)`.
 
 ---

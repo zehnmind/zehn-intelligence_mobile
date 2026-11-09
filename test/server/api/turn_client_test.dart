@@ -15,18 +15,18 @@ class FakeTokens implements ZiTokenSource {
   String current = 'tok-0';
 
   @override
-  Future<String> token() async => current;
+  Future<String?> token() async => current;
 
   @override
-  Future<String> refresh() async => current = 'tok-${++refreshed}';
+  Future<String?> refresh() async => current = 'tok-${++refreshed}';
 }
 
 class ThrowingTokens implements ZiTokenSource {
   @override
-  Future<String> token() async => throw StateError('the app token call failed');
+  Future<String?> token() async => throw StateError('the app token call failed');
 
   @override
-  Future<String> refresh() async => throw StateError('the app token call failed');
+  Future<String?> refresh() async => throw StateError('the app token call failed');
 }
 
 Map<String, Object?> ev(Map<String, Object?> data) => {'turn_id': 't1', 'seq': 1, ...data};
@@ -73,6 +73,9 @@ void main() {
     expect(audio.toJson()['input'], {'type': 'audio', 'format': 'm4a', 'data': 'AA=='});
     expect(audio.toJson()['voice_reply'], isTrue);
     expect(input.withConversation('c2').toJson()['conversation_id'], 'c2');
+    final action = TurnInput.action(conversationId: 'c1', actionId: 'a1', confirm: false, language: 'uz');
+    expect(action.toJson()['input'], {'type': 'action', 'action_id': 'a1', 'decision': 'cancel'});
+    expect(action.isAction, isTrue);
   });
 
   test('streams events of one leg and ends on turn.paused', () async {
@@ -98,6 +101,15 @@ void main() {
     final events = await client.start(input).toList();
     expect(events.single, isA<TurnDone>());
     expect(server.requests.last.headers['authorization'], 'Bearer tok-1');
+  });
+
+  test('an anonymous user sends no Authorization and is not retried', () async {
+    server.on('POST', '/v1/turns', (req, _) => respondJson(req, 401, {'code': 'user_token_required'}));
+    final anonymous = ZiTurnClient(api: ZiApiClient(baseUrl: server.url, info: info), tokens: () => const AnonymousTokenSource());
+    final events = await anonymous.start(input).toList();
+    expect((events.single as TurnFailed).error.code, 'user_token_required');
+    expect(server.requests, hasLength(1));
+    expect(server.requests.single.headers.containsKey('authorization'), isFalse);
   });
 
   test('does not retry twice', () async {

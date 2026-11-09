@@ -109,6 +109,7 @@ class ZiProxyExecutor {
             queryParameters: http.query.isEmpty ? null : http.query,
             options: Options(
               method: http.method,
+              listFormat: ListFormat.multi,
               headers: {
                 ...http.headers,
                 if (http.body != null) 'Content-Type': 'application/json',

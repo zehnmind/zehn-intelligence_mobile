@@ -30,7 +30,7 @@ void main() {
     expect(e.callId, 'c_1');
     expect(e.tool, 'stores.list');
     expect(e.args, {'page': 1, 'size': 10});
-    expect(e.http, isNull);
+    expect(e.request, isNull);
   });
 
   test('client_api_request carries the customer request the server built', () {
@@ -38,9 +38,26 @@ void main() {
       'call_id': 'c_1',
       'tool': 'stores.list',
       'args': {'page': 1},
-      'http': {'method': 'GET', 'path': '/stores', 'query': {'page': '1'}},
+      'request': {'method': 'GET', 'path': '/stores', 'query': {'page': '1'}},
     }) as ClientApiRequest;
-    expect(e.http, {'method': 'GET', 'path': '/stores', 'query': {'page': '1'}});
+    expect(e.request, {'method': 'GET', 'path': '/stores', 'query': {'page': '1'}});
+    expect(e.actionId, isNull);
+  });
+
+  test('a write carries the action the user confirmed, on the event or in its request', () {
+    final top = event('client_api_request', {
+      'call_id': 'c_2',
+      'tool': 'parking.reserve',
+      'action_id': 'a1',
+      'request': {'method': 'POST', 'path': '/r'},
+    }) as ClientApiRequest;
+    expect(top.actionId, 'a1');
+    final inner = event('client_api_request', {
+      'call_id': 'c_2',
+      'tool': 'parking.reserve',
+      'request': {'method': 'POST', 'path': '/r', 'action_id': 'a2'},
+    }) as ClientApiRequest;
+    expect(inner.actionId, 'a2');
   });
 
   test('mount_component parses kind and props', () {
@@ -73,6 +90,31 @@ void main() {
     }) as MountComponent;
     expect(page.route, '/loyalty');
     expect(page.surface, isNull);
+  });
+
+  test('confirm parses the card, its action and its expiry', () {
+    final e = event('confirm', {
+      'call_id': 'c2',
+      'action_id': '6f1d',
+      'tool': 'parking.reserve',
+      'method': 'post',
+      'surface': {'createSurface': <String, Object?>{}},
+      'props': {'zone_id': 12},
+      'confirm_label': 'Reserve',
+      'expires_in': 600,
+    }) as ConfirmEvent;
+    expect(e.actionId, '6f1d');
+    expect(e.tool, 'parking.reserve');
+    expect(e.method, 'POST');
+    expect(e.surface, {'createSurface': <String, Object?>{}});
+    expect(e.props, {'zone_id': 12});
+    expect(e.confirmLabel, 'Reserve');
+    expect(e.expiresIn, const Duration(seconds: 600));
+    final bare = event('confirm', {'action_id': 'a2'}) as ConfirmEvent;
+    expect(bare.method, 'POST');
+    expect(bare.props, isEmpty);
+    expect(bare.confirmLabel, isNull);
+    expect(bare.expiresIn, const Duration(seconds: 600));
   });
 
   test('turn.paused parses deadline as DateTime', () {

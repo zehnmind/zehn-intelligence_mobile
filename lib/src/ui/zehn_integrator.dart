@@ -54,12 +54,18 @@ class ZehnAiButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final runtime = ZiRuntime.instance;
     if (runtime != null) {
-      // The zehn/intelligence launcher: a living soap bubble.
-      return ZiLauncherButton(
-        size: mini ? 48 : 64,
-        icon: icon,
-        label: label ?? ZiStrings.of(runtime.language).ask,
-        onTap: () => unawaited(runtime.openChat(context, title: title)),
+      // Hidden while the console has nothing published for the app.
+      return ValueListenableBuilder<bool>(
+        valueListenable: runtime.available,
+        builder: (context, available, _) => available
+            // The zehn/intelligence launcher: a living soap bubble.
+            ? ZiLauncherButton(
+                size: mini ? 48 : 64,
+                icon: icon,
+                label: label ?? ZiStrings.of(runtime.language).ask,
+                onTap: () => unawaited(runtime.openChat(context, title: title)),
+              )
+            : const SizedBox.shrink(),
       );
     }
     if (!ZehnIntelligence.isInitialized) {

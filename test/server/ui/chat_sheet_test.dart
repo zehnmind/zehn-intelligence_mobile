@@ -7,7 +7,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_settings.dart';
-import 'package:zehn_intelligence/src/server/proxy/tool_runner.dart';
 import 'package:zehn_intelligence/src/server/ui/chat_sheet.dart';
 import 'package:zehn_intelligence/src/server/ui/voice.dart';
 import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiComponentController;
@@ -17,6 +16,18 @@ import '../../support/chat_fakes.dart';
 typedef ComponentBuilder = Widget Function(BuildContext, Map<String, Object?>, ZiComponentController);
 
 const voice = ZiChatSettings(services: {'llm', 'stt', 'tts'});
+
+/// A confirm template, read with the card's props.
+const reserveCard = <String, Object?>{
+  'createSurface': {
+    'surfaceId': 'zi_confirm',
+    'catalogId': 'zehn.basic.v0',
+    'root': 'root',
+    'components': [
+      {'id': 'root', 'component': 'Text', 'text': 'Reserve zone {/zone}?'},
+    ],
+  },
+};
 
 /// A card template as the server sends it in `mount_component.surface`.
 const cinemaCard = <String, Object?>{
@@ -241,15 +252,16 @@ void main() {
     expect(find.text('from app Cinematica'), findsOneWidget);
   });
 
-  testWidgets('route component closes the sheet and calls openRoute with filled placeholders', (tester) async {
+  testWidgets('route component closes the sheet and opens the route exactly as sent', (tester) async {
     turns.script([
       started,
-      const MountComponent(callId: 'm1', component: 'cinema_page', kind: 'route', props: {'id': 1}, route: '/explore/cinema/{id}'),
+      // The server fills the route; the SDK never changes it.
+      const MountComponent(callId: 'm1', component: 'venue_page', kind: 'route', props: {'id': 'a1'}, route: '/venues/{id}'),
       done,
     ]);
     await open(tester);
     await type(tester, 'kino');
-    expect(routes, ['/explore/cinema/1']);
+    expect(routes, ['/venues/{id}']);
     expect(find.byType(ZiChatSheet), findsNothing);
   });
 
@@ -259,7 +271,7 @@ void main() {
     addTearDown(settings.dispose);
     turns.script([
       started,
-      const MountComponent(callId: 'm1', component: 'cinema_page', kind: 'route', props: {'id': 1}, route: '/explore/cinema/{id}'),
+      const MountComponent(callId: 'm1', component: 'cinema_page', kind: 'route', props: {'id': 1}, route: '/explore/cinema/1'),
       const MountComponent(callId: 'm2', component: 'loyalty_page', kind: 'route', props: {}, route: '/loyalty'),
       done,
     ]);
@@ -373,27 +385,57 @@ void main() {
     expect(tester.getBottomLeft(find.byType(TextField)).dy, lessThanOrEqualTo(keyboardTop));
   });
 
-  testWidgets('a confirmation card allows the call', (tester) async {
+  ConfirmEvent reserve({String method = 'POST', Map<String, Object?>? surface = reserveCard, String? label = 'Reserve'}) => ConfirmEvent(
+    callId: 'c2',
+    actionId: 'a1',
+    tool: 'parking.reserve',
+    method: method,
+    surface: surface,
+    props: const {'zone': 'B1'},
+    confirmLabel: label,
+    expiresIn: const Duration(minutes: 10),
+    turnId: 't1',
+  );
+
+  testWidgets('a confirm card draws its template with Cancel and the server\'s Confirm word', (tester) async {
+    turns.script([started, reserve(), done]);
     await open(tester);
-    final answer = cubit.confirm(const ZiConfirmRequest(callId: 'c_1', tool: 'parking.reserve', title: 'Reserve a place in zone 7?', args: {}));
+    await type(tester, 'reserve');
+    expect(find.text('Reserve zone B1?'), findsOneWidget);
+    expect(find.text('Reserve'), findsOneWidget);
+    expect(find.text('Cancel'), findsOneWidget);
+    turns.script([const TextDelta(text: 'Done, place reserved.'), done]);
+    await tester.tap(find.byKey(const ValueKey('zi-confirm')));
     await tester.pumpAndSettle();
-    expect(find.text('Reserve a place in zone 7?'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('zi-allow')));
-    await tester.pumpAndSettle();
-    expect(await answer, isTrue);
-    expect(find.text('Allowed'), findsOneWidget);
-    expect(find.byKey(const ValueKey('zi-allow')), findsNothing);
+    expect((turns.starts.last.toJson()['input']! as Map)['decision'], 'confirm');
+    expect(find.text('Confirmed'), findsOneWidget);
+    expect(find.byKey(const ValueKey('zi-confirm')), findsNothing);
+    expect(find.textContaining('place reserved', findRichText: true), findsOneWidget);
   });
 
-  testWidgets('cancel declines, and a card without a title uses the SDK words', (tester) async {
+  testWidgets('Cancel sends the cancel decision', (tester) async {
+    turns.script([started, reserve(), done]);
     await open(tester);
-    final answer = cubit.confirm(const ZiConfirmRequest(callId: 'c_1', tool: 'parking.reserve', title: null, args: {}));
-    await tester.pumpAndSettle();
-    expect(find.text('Allow this action?'), findsOneWidget);
+    await type(tester, 'reserve');
+    turns.script([done]);
     await tester.tap(find.byKey(const ValueKey('zi-decline')));
     await tester.pumpAndSettle();
-    expect(await answer, isFalse);
+    expect((turns.starts.last.toJson()['input']! as Map)['decision'], 'cancel');
     expect(find.text('Cancelled'), findsOneWidget);
+  });
+
+  testWidgets('a DELETE confirm is in the warning colour; no label and no template use the SDK words', (tester) async {
+    turns.script([started, reserve(method: 'DELETE', surface: null, label: null), done]);
+    await open(tester);
+    await type(tester, 'cancel my reservation');
+    expect(find.text('Confirm this?'), findsOneWidget);
+    expect(find.text('Confirm'), findsOneWidget);
+    final box = tester.widget<Container>(
+      find.descendant(of: find.byKey(const ValueKey('zi-confirm')), matching: find.byType(Container)).first,
+    );
+    expect((box.decoration! as BoxDecoration).color, const Color(0xFFD64545));
+    // The card's expiry timer belongs to the chat, which outlives this sheet.
+    cubit.reset();
   });
 
   testWidgets('the sheet fills the height below the status bar', (tester) async {

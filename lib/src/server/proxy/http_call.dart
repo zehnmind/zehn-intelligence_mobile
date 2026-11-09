@@ -1,9 +1,9 @@
 import '../../ui/zehn_integrator.dart' show ZiToolError;
 
-/// A customer API request the server built for one tool call: the `http`
-/// object of `client_api_request`. The server fills path parameters, query,
-/// headers and body from the call's arguments; the phone only checks it is
-/// safe, adds the user's login, and makes it.
+/// A customer API request the server built for one tool call: the
+/// `request` object of `client_api_request`. The server fills path
+/// parameters, query, headers and body from the call's arguments; the phone
+/// only checks it is safe, adds the user's login, and makes it.
 class ZiHttpCall {
   const ZiHttpCall({
     required this.method,
@@ -15,10 +15,8 @@ class ZiHttpCall {
     this.authHeader = 'Authorization',
     this.authScheme = 'Bearer',
     this.result,
-    bool? confirm,
-    this.confirmTitle,
     this.baseUrl,
-  }) : confirm = confirm ?? method != 'GET';
+  });
 
   static const methods = {'GET', 'POST', 'PUT', 'PATCH', 'DELETE'};
 
@@ -51,15 +49,16 @@ class ZiHttpCall {
       }
     }
     final auth = json['auth'];
-    final rawConfirm = json['confirm'];
-    final confirmTitle = rawConfirm is Map && rawConfirm['title'] is String ? rawConfirm['title'] as String : null;
     return ZiHttpCall(
       method: method,
       path: path,
       query: {
         if (json['query'] is Map)
           for (final e in (json['query'] as Map).entries)
-            if (e.value != null) '${e.key}': '${e.value}',
+            if (e.value is List)
+              '${e.key}': [for (final v in e.value as List) if (v != null) '$v']
+            else if (e.value != null)
+              '${e.key}': '${e.value}',
       },
       headers: {
         if (json['headers'] is Map)
@@ -71,8 +70,6 @@ class ZiHttpCall {
       authHeader: json['auth_header'] is String ? json['auth_header'] as String : 'Authorization',
       authScheme: json['auth_scheme'] is String ? json['auth_scheme'] as String : 'Bearer',
       result: ZiResultRule.fromJson(json['result']),
-      confirm: rawConfirm is bool ? rawConfirm : (rawConfirm is Map ? true : null),
-      confirmTitle: confirmTitle,
       baseUrl: baseUrl,
     );
   }
@@ -82,7 +79,9 @@ class ZiHttpCall {
 
   /// Starts with `/`, parameters already filled and URL-encoded.
   final String path;
-  final Map<String, String> query;
+
+  /// A `String`, or a `List<String>` whose key repeats (`?tag=a&tag=b`).
+  final Map<String, Object> query;
   final Map<String, String> headers;
 
   /// The JSON body of a write; null for none.
@@ -94,12 +93,8 @@ class ZiHttpCall {
   final String authScheme;
   final ZiResultRule? result;
 
-  /// The user must allow the call in the chat first. Defaults to true for
-  /// every method but GET.
-  final bool confirm;
-
-  /// The question, already in the user's language; null uses the SDK's words.
-  final String? confirmTitle;
+  /// Changes data: made only after the user tapped Confirm on its card.
+  bool get isWrite => method != 'GET';
 
   /// Where the customer API is, for apps that gave callbacks rather than
   /// their own Dio (and no `apiBaseUrl` of their own).

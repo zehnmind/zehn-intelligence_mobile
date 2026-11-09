@@ -8,6 +8,7 @@ class RecordedRequest {
     required this.method,
     required this.path,
     required this.query,
+    this.queryAll = const {},
     required this.headers,
     required this.body,
   });
@@ -15,6 +16,9 @@ class RecordedRequest {
   final String method;
   final String path;
   final Map<String, String> query;
+
+  /// Every value of a repeated query key.
+  final Map<String, List<String>> queryAll;
 
   /// Lower-case header names.
   final Map<String, String> headers;
@@ -58,6 +62,7 @@ class FakeServer {
       method: req.method,
       path: req.uri.path,
       query: req.uri.queryParameters,
+      queryAll: req.uri.queryParametersAll,
       headers: headers,
       body: body,
     );

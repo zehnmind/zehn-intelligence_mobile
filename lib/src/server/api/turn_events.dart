@@ -20,6 +20,7 @@ sealed class TurnEvent {
       'text.delta',
       'client_api_request',
       'mount_component',
+      'confirm',
       'audio',
       'suggestions',
       'turn.paused',
@@ -55,7 +56,8 @@ sealed class TurnEvent {
         callId: d.string('call_id'),
         tool: d.string('tool'),
         args: d.optMap('args') ?? const {},
-        http: d.optMap('http'),
+        request: d.optMap('request'),
+        actionId: d.optString('action_id') ?? _actionIn(d.optMap('request')),
         turnId: turnId,
         seq: seq,
       ),
@@ -66,6 +68,18 @@ sealed class TurnEvent {
         props: d.optMap('props') ?? const {},
         surface: d.optMap('surface'),
         route: d.optString('route'),
+        turnId: turnId,
+        seq: seq,
+      ),
+      'confirm' => ConfirmEvent(
+        callId: d.optString('call_id') ?? '',
+        actionId: d.string('action_id'),
+        tool: d.optString('tool') ?? '',
+        method: (d.optString('method') ?? 'POST').toUpperCase(),
+        surface: d.optMap('surface'),
+        props: d.optMap('props') ?? const {},
+        confirmLabel: d.optString('confirm_label'),
+        expiresIn: Duration(seconds: d.optInt('expires_in') ?? 600),
         turnId: turnId,
         seq: seq,
       ),
@@ -116,16 +130,27 @@ final class TextDelta extends TurnEvent {
 }
 
 final class ClientApiRequest extends TurnEvent {
-  const ClientApiRequest({required this.callId, required this.tool, required this.args, this.http, super.turnId, super.seq});
+  const ClientApiRequest({
+    required this.callId,
+    required this.tool,
+    required this.args,
+    this.request,
+    this.actionId,
+    super.turnId,
+    super.seq,
+  });
 
   final String callId;
   final String tool;
   final Map<String, Object?> args;
 
-  /// The customer API request the server built for this call (method,
-  /// path, query, headers, body, auth, result, confirm, base_url); null for
-  /// a tool the app handles itself. Checked by `ZiHttpCall.fromJson`.
-  final Map<String, Object?>? http;
+  /// The customer API request the server built for this call (method, path,
+  /// query, body, and optionally headers, auth, result, base_url); null for a
+  /// tool the app handles itself. Checked by `ZiHttpCall.fromJson`.
+  final Map<String, Object?>? request;
+
+  /// For a write: the `confirm` card the user tapped Confirm on.
+  final String? actionId;
 }
 
 final class MountComponent extends TurnEvent {
@@ -151,8 +176,42 @@ final class MountComponent extends TurnEvent {
   /// `inline` and `sheet`; null when the app registered its own widget.
   final Map<String, Object?>? surface;
 
-  /// The app route to open, for `route`; `{name}` is filled from [props].
+  /// The app route to open, for `route`: final, filled and escaped by the
+  /// server. Opened as it is.
   final String? route;
+}
+
+/// A data-changing call waiting for the user's tap: nothing reaches the
+/// app's API until they confirm. The tap is a new turn
+/// ([TurnInput.action]).
+final class ConfirmEvent extends TurnEvent {
+  const ConfirmEvent({
+    required this.callId,
+    required this.actionId,
+    required this.tool,
+    required this.method,
+    this.surface,
+    required this.props,
+    this.confirmLabel,
+    required this.expiresIn,
+    super.turnId,
+    super.seq,
+  });
+
+  final String callId;
+  final String actionId;
+  final String tool;
+
+  /// `POST`, `PUT`, `PATCH` or `DELETE`.
+  final String method;
+
+  /// The card's template, drawn with [props].
+  final Map<String, Object?>? surface;
+  final Map<String, Object?> props;
+
+  /// The Confirm button's word, in the user's language; null uses the SDK's.
+  final String? confirmLabel;
+  final Duration expiresIn;
 }
 
 final class AudioClip extends TurnEvent {
@@ -197,6 +256,11 @@ final class TurnFailed extends TurnEvent {
 
 final class PingEvent extends TurnEvent {
   const PingEvent();
+}
+
+String? _actionIn(Map<String, Object?>? request) {
+  final id = request?['action_id'];
+  return id is String && id.isNotEmpty ? id : null;
 }
 
 class _Body {

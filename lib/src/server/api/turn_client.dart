@@ -22,6 +22,16 @@ class TurnInput {
     this.voiceReply = true,
   }) : input = {'type': 'audio', 'format': format, 'data': base64};
 
+  /// The user's tap on a `confirm` card.
+  TurnInput.action({
+    this.conversationId,
+    required String actionId,
+    required bool confirm,
+    required this.language,
+    this.utcOffsetMinutes,
+  }) : input = {'type': 'action', 'action_id': actionId, 'decision': confirm ? 'confirm' : 'cancel'},
+       voiceReply = false;
+
   const TurnInput._(this.conversationId, this.input, this.language, this.utcOffsetMinutes, this.voiceReply);
 
   /// Null starts a new chat.
@@ -32,6 +42,7 @@ class TurnInput {
   final bool voiceReply;
 
   bool get isAudio => input['type'] == 'audio';
+  bool get isAction => input['type'] == 'action';
 
   TurnInput withConversation(String? id) => TurnInput._(id, input, language, utcOffsetMinutes, voiceReply);
 
@@ -112,7 +123,9 @@ class ZiTurnClient {
       return await _api.postStream(path, body, userToken: token, cancelToken: cancel);
     } on ZiApiException catch (e) {
       if (e.code != 'user_token_expired' && e.code != 'user_token_required') rethrow;
-      return _api.postStream(path, body, userToken: await tokens.refresh(), cancelToken: cancel);
+      final fresh = await tokens.refresh();
+      if (fresh == null) rethrow;
+      return _api.postStream(path, body, userToken: fresh, cancelToken: cancel);
     }
   }
 

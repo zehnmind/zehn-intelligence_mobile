@@ -26,11 +26,9 @@ void main() {
       final c = resolveInitConfig(fileConfig: {
         'zi_app_key': 'zi_prod_file',
         'zi_console_url': 'https://console.example',
-        'zi_spec_version': '1.0.3',
       });
       expect(c.appKey, 'zi_prod_file');
       expect(c.consoleUrl, Uri.parse('https://console.example'));
-      expect(c.specVersion, '1.0.3');
     });
 
     test('defines are the last fallback', () {
@@ -71,55 +69,84 @@ void main() {
     });
 
     Future<ZiRuntime> create({Object? Function()? userToken}) => ZiRuntime.create(
-      config: ZiInitConfig(appKey: 'zi_test_abc', consoleUrl: server.url, specVersion: '1.0.0'),
+      config: ZiInitConfig(appKey: 'zi_test_abc', consoleUrl: server.url),
       info: info,
       userToken: userToken == null ? null : () => userToken() as String?,
       store: store,
     );
 
-    test('create with userToken uses CallbackTokenSource, without it InstallTokenSource', () async {
+    test('create with userToken uses CallbackTokenSource, without it no token', () async {
       expect((await create(userToken: () => 'u')).tokens, isA<CallbackTokenSource>());
-      expect((await create()).tokens, isA<InstallTokenSource>());
+      expect((await create()).tokens, isA<AnonymousTokenSource>());
     });
 
-    test('create makes no network call', () async {
+    test('create asks for /v1/config in the background', () async {
+      server.on('GET', '/v1/config', (req, _) async {
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+        await respondJson(req, 200, {'services': ['stt']});
+      });
+      final sw = Stopwatch()..start();
       final runtime = await create();
-      expect(server.requests, isEmpty);
-      expect(runtime.api.specVersion, '1.0.0');
-      expect(runtime.settings.value.services, isEmpty);
+      expect(sw.elapsedMilliseconds, lessThan(500));
+      expect(runtime.settings.value.speech, isFalse);
+      await runtime.loadConfig();
+      expect(runtime.settings.value.speech, isTrue);
+      expect(server.requests.where((r) => r.path == '/v1/config'), hasLength(1));
     });
 
-    test('the starter suggestions bring the chat settings', () async {
-      server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 200, {
-            'suggestions': ['Salom'],
-            'chat': {
-              'languages': ['uz', 'xx'],
-              'default_language': 'uz',
-              'services': ['llm', 'stt'],
-              'welcome_title': 'Salom!',
-              'spec_version': 'v7',
-            },
+    test('every console call carries the same install id and no spec version', () async {
+      server.on('GET', '/v1/config', (req, _) => respondJson(req, 200, {}));
+      await (await create()).loadConfig();
+      await (await create()).loadConfig();
+      final ids = {for (final r in server.requests) r.headers['x-zi-install-id']};
+      expect(ids.single, matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(server.requests.any((r) => r.headers.containsKey('x-zi-spec-version')), isFalse);
+      expect(server.requests.any((r) => r.path == '/v1/installs'), isFalse);
+    });
+
+    test('the config sets the chat settings and the language', () async {
+      server.on('GET', '/v1/config', (req, _) => respondJson(req, 200, {
+            'languages': ['uz', 'xx'],
+            'default_language': 'uz',
+            'services': ['llm', 'stt'],
+            'copy': {'welcome_title': {'uz': 'Salom!'}},
           }));
-      final runtime = await create(userToken: () => 'u');
-      // Before the settings: the phone's language if the SDK knows it.
+      final runtime = await create();
+      // Before the config: the phone's language if the SDK knows it.
       expect(runtime.language, 'en');
-      await runtime.chat.loadStarterSuggestions();
-      expect(runtime.chat.state.suggestions, ['Salom']);
-      expect(runtime.settings.value.welcomeTitle, 'Salom!');
+      await runtime.loadConfig();
+      expect(runtime.available.value, isTrue);
       expect(runtime.settings.value.speech, isTrue);
-      expect(runtime.api.specVersion, 'v7');
       // The phone's language is not offered: the default one.
       expect(runtime.language, 'uz');
+      expect(runtime.settings.value.welcomeTitle(runtime.language), 'Salom!');
       runtime.language = 'ru';
       expect(runtime.language, 'ru');
     });
 
-    test('suggestions without chat settings keep the ones it has', () async {
+    test('404 spec_not_found hides the assistant', () async {
+      server.on('GET', '/v1/config', (req, _) => respondJson(req, 404, {'code': 'spec_not_found'}));
+      final runtime = await create();
+      await runtime.loadConfig();
+      expect(runtime.available.value, isFalse);
+    });
+
+    test('a config that fails for another reason keeps the assistant and its last settings', () async {
+      var fail = false;
+      server.on('GET', '/v1/config', (req, _) => fail ? respondJson(req, 503, {}) : respondJson(req, 200, {'services': ['stt']}));
+      final runtime = await create();
+      await runtime.loadConfig();
+      fail = true;
+      await runtime.loadConfig();
+      expect(runtime.available.value, isTrue);
+      expect(runtime.settings.value.speech, isTrue);
+    });
+
+    test('the starter suggestions are only suggestions', () async {
       server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 200, {'suggestions': ['Hi']}));
       final runtime = await create(userToken: () => 'u');
       await runtime.chat.loadStarterSuggestions();
       expect(runtime.chat.state.suggestions, ['Hi']);
-      expect(runtime.api.specVersion, '1.0.0');
     });
 
     test('setUserToken switches to the app token; clearUser resets the chat and goes back', () async {
@@ -129,7 +156,7 @@ void main() {
       runtime.chat.showError('x');
       await runtime.clearUser();
       expect(runtime.chat.state, const ZiChatState());
-      expect(runtime.tokens, isA<InstallTokenSource>());
+      expect(runtime.tokens, isA<AnonymousTokenSource>());
     });
 
     test('isSignedIn false keeps login-only tools from being called', () async {
@@ -141,7 +168,7 @@ void main() {
         store: store,
       );
       final results = await runtime.tools.runAll([
-        ClientApiRequest(callId: 'c1', tool: 'loyalty_cards.get', args: const {}, http: {
+        ClientApiRequest(callId: 'c1', tool: 'loyalty_cards.get', args: const {}, request: {
           'method': 'GET',
           'path': '/loyalty/cards/my',
           'auth': true,
@@ -152,9 +179,10 @@ void main() {
       expect(server.requests, isEmpty);
     });
 
-    test('the chat answers the tool runner\'s questions', () async {
+    test('the tool runner checks writes against what the user confirmed in the chat', () async {
       final runtime = await create();
-      expect(runtime.tools.confirmer, isNotNull);
+      expect(runtime.tools.takeConfirmed, isNotNull);
+      expect(runtime.tools.takeConfirmed!('a1'), isFalse);
     });
   });
 }

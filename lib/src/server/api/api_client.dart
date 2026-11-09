@@ -76,17 +76,19 @@ class ZiApiClient {
   final Dio _dio;
   final ZiClientInfo info;
 
-  /// The published spec in use; sent once known.
-  String? specVersion;
+  /// This install's id (`loadInstallId`); sent once known.
+  String? installId;
 
+  // No X-ZI-Spec-Version: with it the server treats the build as an old one
+  // that pins a spec (no cards, no writes).
   Map<String, String> headers({String? userToken}) => {
     if (userToken != null) 'Authorization': 'Bearer $userToken',
     'X-ZI-App-Key': info.appKey,
     'X-ZI-Package': info.packageName,
     'X-ZI-App-Version': info.appVersion,
-    'X-ZI-Spec-Version': ?specVersion,
     'X-ZI-SDK-Version': info.sdkVersion,
     'X-ZI-Platform': info.platform,
+    'X-ZI-Install-Id': ?installId,
   };
 
   Future<Object?> getJson(String path, {Map<String, String>? query, String? userToken}) =>
@@ -100,7 +102,7 @@ class ZiApiClient {
   Future<ResponseBody> postStream(
     String path,
     Object body, {
-    required String userToken,
+    String? userToken,
     CancelToken? cancelToken,
   }) async {
     final Response<ResponseBody> response;

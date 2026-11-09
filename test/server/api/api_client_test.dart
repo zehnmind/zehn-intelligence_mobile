@@ -28,24 +28,25 @@ void main() {
 
   test('sends every X-ZI header', () async {
     server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 200, {'suggestions': []}));
-    api.specVersion = '1.0.3';
+    api.installId = '0123456789abcdef0123456789abcdef';
     await api.getJson('/v1/suggestions', userToken: 't');
     final h = server.requests.single.headers;
     expect(h['authorization'], 'Bearer t');
     expect(h['x-zi-app-key'], 'zi_test_abc');
     expect(h['x-zi-package'], 'uz.example.app');
     expect(h['x-zi-app-version'], '1.2.0+5');
-    expect(h['x-zi-spec-version'], '1.0.3');
+    expect(h['x-zi-install-id'], '0123456789abcdef0123456789abcdef');
     expect(h['x-zi-sdk-version'], '0.4.0');
+    // With it the server treats the build as one that pins a spec.
+    expect(h.containsKey('x-zi-spec-version'), isFalse);
     expect(h['x-zi-platform'], 'ios');
   });
 
-  test('omits spec and auth headers when unknown', () async {
+  test('omits the auth header without a user token', () async {
     server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 200, {}));
     await api.getJson('/v1/suggestions');
     final h = server.requests.single.headers;
     expect(h.containsKey('authorization'), isFalse);
-    expect(h.containsKey('x-zi-spec-version'), isFalse);
   });
 
   test('getJson passes the query', () async {
@@ -56,13 +57,13 @@ void main() {
   });
 
   test('maps error body to code', () async {
-    server.on('POST', '/v1/installs', (req, _) => respondJson(req, 401, {
+    server.on('POST', '/v1/turns', (req, _) => respondJson(req, 401, {
           'code': 'user_token_expired',
           'i18n_key': 'errors.user_token_expired',
           'params': <String, Object?>{},
           'message': 'm',
         }));
-    final e = await failure(api.postJson('/v1/installs', {'install_id': 'x'}));
+    final e = await failure(api.postJson('/v1/turns', {'install_id': 'x'}));
     expect(e.code, 'user_token_expired');
     expect(e.status, 401);
     expect(e.message, 'm');
@@ -70,8 +71,8 @@ void main() {
   });
 
   test('422 is invalid_request', () async {
-    server.on('POST', '/v1/installs', (req, _) => respondJson(req, 422, {'detail': []}));
-    final e = await failure(api.postJson('/v1/installs', {}));
+    server.on('POST', '/v1/turns', (req, _) => respondJson(req, 422, {'detail': []}));
+    final e = await failure(api.postJson('/v1/turns', {}));
     expect(e.code, 'invalid_request');
     expect(e.retryable, isFalse);
   });
