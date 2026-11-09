@@ -361,4 +361,17 @@ void main() {
     expect(await answer, isFalse);
     expect(find.text('Cancelled'), findsOneWidget);
   });
+
+  testWidgets('the sheet fills the height below the status bar', (tester) async {
+    tester.view.padding = const FakeViewPadding(top: 62 * 3, bottom: 34 * 3);
+    tester.view.viewPadding = const FakeViewPadding(top: 62 * 3, bottom: 34 * 3);
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+    await open(tester);
+    final sheet = tester.getRect(find.byType(ZiChatSheet));
+    expect(sheet.top, 62);
+    expect(sheet.bottom, 874);
+    // The composer area keeps clear of the home indicator.
+    expect(tester.getBottomLeft(find.text('Type a message')).dy, lessThanOrEqualTo(874 - 34));
+  });
 }

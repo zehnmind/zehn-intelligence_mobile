@@ -67,12 +67,12 @@ class ZiChatSheet extends StatefulWidget {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       barrierColor: style.barrier,
-      // The padding lifts the whole sheet, composer included, above the keyboard.
+      // Full height: useSafeArea keeps the top below the status bar / notch,
+      // and the body keeps clear of the home indicator. The padding lifts the
+      // whole sheet, composer included, above the keyboard.
       builder: (sheetContext) => Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheetContext).bottom),
-        child: FractionallySizedBox(
-          heightFactor: 0.9,
-          alignment: Alignment.bottomCenter,
+        child: SizedBox.expand(
           child: ZiChatSheet(
             cubit: cubit,
             bootstrap: bootstrap,
