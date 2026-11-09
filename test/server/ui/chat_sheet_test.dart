@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/bootstrap/bootstrap.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
+import 'package:zehn_intelligence/src/server/proxy/tool_runner.dart';
 import 'package:zehn_intelligence/src/server/ui/chat_sheet.dart';
 import 'package:zehn_intelligence/src/server/ui/voice.dart';
 import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiComponentController;
@@ -336,5 +337,28 @@ void main() {
     final screenHeight = tester.view.physicalSize.height / tester.view.devicePixelRatio;
     final keyboardTop = screenHeight - 900 / tester.view.devicePixelRatio;
     expect(tester.getBottomLeft(find.byType(TextField)).dy, lessThanOrEqualTo(keyboardTop));
+  });
+
+  testWidgets('a confirmation card allows the call', (tester) async {
+    await open(tester);
+    final answer = cubit.confirm(const ZiConfirmRequest(callId: 'c_1', tool: 'parking.reserve', title: 'Reserve a place in zone 7?', args: {}));
+    await tester.pumpAndSettle();
+    expect(find.text('Reserve a place in zone 7?'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('zi-allow')));
+    await tester.pumpAndSettle();
+    expect(await answer, isTrue);
+    expect(find.text('Allowed'), findsOneWidget);
+    expect(find.byKey(const ValueKey('zi-allow')), findsNothing);
+  });
+
+  testWidgets('cancel declines, and a card without a title uses the SDK words', (tester) async {
+    await open(tester);
+    final answer = cubit.confirm(const ZiConfirmRequest(callId: 'c_1', tool: 'parking.reserve', title: null, args: {}));
+    await tester.pumpAndSettle();
+    expect(find.text('Allow this action?'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('zi-decline')));
+    await tester.pumpAndSettle();
+    expect(await answer, isFalse);
+    expect(find.text('Cancelled'), findsOneWidget);
   });
 }

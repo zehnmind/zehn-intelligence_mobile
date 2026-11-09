@@ -29,6 +29,12 @@ class ZiStrings {
   String get tryAsking => _w['tryAsking']!;
   String get typeMessage => _w['typeMessage']!;
   String get thinking => _w['thinking']!;
+  String get allow => _w['allow']!;
+  String get decline => _w['decline']!;
+  String get confirmDefault => _w['confirmDefault']!;
+  String get allowed => _w['allowed']!;
+  String get declined => _w['declined']!;
+  String get expired => _w['expired']!;
 
   /// Not translated: the brand line under the title.
   String get poweredBy => 'Powered by zehnmind.ai';
@@ -46,6 +52,12 @@ class ZiStrings {
   }]!;
 
   static const _uz = {
+    'allow': 'Ruxsat berish',
+    'decline': 'Bekor qilish',
+    'confirmDefault': 'Bu amalga ruxsat berasizmi?',
+    'allowed': 'Ruxsat berildi',
+    'declined': 'Bekor qilindi',
+    'expired': 'Vaqt tugadi',
     'chat': 'Suhbat',
     'back': 'Orqaga',
     'welcomeTitle': 'Qanday yordam bera olaman?',
@@ -76,6 +88,12 @@ class ZiStrings {
   };
 
   static const _ru = {
+    'allow': 'Разрешить',
+    'decline': 'Отмена',
+    'confirmDefault': 'Разрешить это действие?',
+    'allowed': 'Разрешено',
+    'declined': 'Отменено',
+    'expired': 'Время вышло',
     'chat': 'Чат',
     'back': 'Назад',
     'welcomeTitle': 'Чем могу помочь?',
@@ -106,6 +124,12 @@ class ZiStrings {
   };
 
   static const _en = {
+    'allow': 'Allow',
+    'decline': 'Cancel',
+    'confirmDefault': 'Allow this action?',
+    'allowed': 'Allowed',
+    'declined': 'Cancelled',
+    'expired': 'Timed out',
     'chat': 'Chat',
     'back': 'Back',
     'welcomeTitle': 'How can I help you?',

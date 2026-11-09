@@ -113,10 +113,15 @@ class ZiProxyExecutor {
       return await dio
           .request<Object?>(
             url,
+            data: request.body == null ? null : jsonEncode(request.body),
             queryParameters: request.query.isEmpty ? null : request.query,
             options: Options(
               method: request.method,
-              headers: {...request.headers, ...login},
+              headers: {
+                ...request.headers,
+                if (request.body != null) 'Content-Type': 'application/json',
+                ...login,
+              },
               // The app's own client keeps its validateStatus, so its
               // interceptors see a 401 and can refresh.
               validateStatus: appDefaults ? null : (_) => true,

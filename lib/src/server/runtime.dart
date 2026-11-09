@@ -157,6 +157,8 @@ class ZiRuntime {
       language: () => runtime.language,
       starterSuggestions: runtime._starterSuggestions,
     );
+    // Data-changing tools ask the user in the chat first.
+    tools.confirmer = runtime.chat.confirm;
     return runtime;
   }
 

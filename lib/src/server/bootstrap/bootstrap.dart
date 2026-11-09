@@ -123,7 +123,8 @@ class ZiApiSettings {
   final Map<String, String> headers;
 }
 
-enum ZiParamIn { path, query, header }
+/// `body` puts the argument in the JSON body (not allowed on GET).
+enum ZiParamIn { path, query, header, body }
 
 /// Where one tool argument goes in the request.
 class ZiParam {
@@ -145,13 +146,19 @@ class ZiHttpTool {
     this.headers = const {},
     this.auth = false,
     this.result,
-  });
+    bool? confirm,
+    this.confirmTitle = const {},
+  }) : confirm = confirm ?? method != 'GET';
+
+  static const methods = {'GET', 'POST', 'PUT', 'PATCH', 'DELETE'};
 
   static ZiHttpTool? _read(Object? json) {
     if (json is! Map) return null;
-    final method = json['method'];
+    final rawMethod = json['method'];
     final path = json['path'];
-    if (method is! String || path is! String || path.isEmpty) return null;
+    if (rawMethod is! String || path is! String || path.isEmpty) return null;
+    final method = rawMethod.toUpperCase();
+    if (!methods.contains(method)) return null;
     final params = <ZiParam>[];
     final rawParams = json['params'];
     if (rawParams != null) {
@@ -162,24 +169,39 @@ class ZiHttpTool {
           'path' => ZiParamIn.path,
           'query' => ZiParamIn.query,
           'header' => ZiParamIn.header,
+          'body' => ZiParamIn.body,
           _ => null,
         };
-        if (location == null) return null;
+        if (location == null || (location == ZiParamIn.body && method == 'GET')) return null;
         params.add(ZiParam(name: p['name'] as String, location: location, key: _string(p['key'])));
       }
     }
     final auth = json['auth'];
+    // `confirm`: true / false, or {"title": {"uz": …, "en": …}}. Writes
+    // default to true.
+    final rawConfirm = json['confirm'];
     return ZiHttpTool(
-      method: method.toUpperCase(),
+      method: method,
       path: path,
       params: params,
       headers: _stringMap(json['headers']),
       auth: auth is bool && auth,
       result: ZiResultRule._read(json['result']),
+      confirm: rawConfirm is bool ? rawConfirm : (rawConfirm is Map ? true : null),
+      confirmTitle: rawConfirm is Map ? _stringMap(rawConfirm['title']) : const {},
     );
   }
 
+  /// `GET`, `POST`, `PUT`, `PATCH` or `DELETE`.
   final String method;
+
+  /// The user must allow the call in the chat first. Defaults to true for
+  /// every method but GET.
+  final bool confirm;
+
+  /// The question the user is asked, per language; `{arg}` placeholders are
+  /// filled from the call's arguments. Empty: the SDK's own words.
+  final Map<String, String> confirmTitle;
 
   /// Starts with `/`; `{name}` marks a path parameter.
   final String path;

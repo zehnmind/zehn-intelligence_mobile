@@ -50,10 +50,12 @@ class FakeRunner extends ZiToolRunner {
       );
 
   final List<List<ClientApiRequest>> rounds = [];
+  final List<DateTime?> deadlines = [];
 
   @override
-  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls) async {
+  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls, {DateTime? deadline}) async {
     rounds.add(calls);
+    deadlines.add(deadline);
     return [for (final c in calls) ToolCallResult.ok(c.callId, {'tool': c.tool})];
   }
 }

@@ -6,12 +6,25 @@ import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/bootstrap/bootstrap.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
+import 'package:zehn_intelligence/src/server/proxy/tool_runner.dart';
 
 import '../../support/chat_fakes.dart';
 
+/// Asks a question during the round but never waits for the answer.
+class AskingRunner extends FakeRunner {
+  ZiConfirmer? ask;
+
+  @override
+  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls, {DateTime? deadline}) async {
+    unawaited(ask!(ZiConfirmRequest(callId: calls.first.callId, tool: calls.first.tool, title: 'Reserve?', args: const {})));
+    await Future<void>.delayed(Duration.zero);
+    return super.runAll(calls, deadline: deadline);
+  }
+}
+
 class ThrowingRunner extends FakeRunner {
   @override
-  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls) async => throw StateError('bug');
+  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls, {DateTime? deadline}) async => throw StateError('bug');
 }
 
 void main() {
@@ -234,5 +247,68 @@ void main() {
     final before = audio.stops;
     await cubit.stopAudio();
     expect(audio.stops, before + 1);
+  });
+
+  group('confirmations', () {
+    const request = ZiConfirmRequest(callId: 'c_1', tool: 'parking.reserve', title: 'Reserve zone 7?', args: {'zone_id': 7});
+
+    test('confirm shows a card; allowing resolves true', () async {
+      final answer = cubit.confirm(request);
+      expect(cubit.state.items.single, const ZiConfirmItem('c_1', 'Reserve zone 7?'));
+      cubit.answerConfirmation('c_1', allow: true);
+      expect(await answer, isTrue);
+      expect(cubit.state.items.single, const ZiConfirmItem('c_1', 'Reserve zone 7?', status: ZiConfirmStatus.allowed));
+    });
+
+    test('declining resolves false and marks the card', () async {
+      final answer = cubit.confirm(request);
+      cubit.answerConfirmation('c_1', allow: false);
+      expect(await answer, isFalse);
+      expect((cubit.state.items.single as ZiConfirmItem).status, ZiConfirmStatus.declined);
+    });
+
+    test('answering twice keeps the first answer', () async {
+      final answer = cubit.confirm(request);
+      cubit
+        ..answerConfirmation('c_1', allow: true)
+        ..answerConfirmation('c_1', allow: false);
+      expect(await answer, isTrue);
+      expect((cubit.state.items.single as ZiConfirmItem).status, ZiConfirmStatus.allowed);
+    });
+
+    test('reset declines a pending question', () async {
+      final answer = cubit.confirm(request);
+      cubit.reset();
+      expect(await answer, isFalse);
+    });
+
+    test('a question still open after the round is marked expired', () async {
+      final asking = AskingRunner();
+      final c = ZiChatCubit(turns: turns, tools: asking, audio: audio, language: () => 'en');
+      asking.ask = c.confirm;
+      turns
+        ..script([
+          started,
+          const ClientApiRequest(callId: 'c_1', tool: 'parking.reserve', args: {}),
+          TurnPaused(callIds: const ['c_1'], deadline: DateTime.utc(2030), maxResultBytes: 32768, turnId: 't1'),
+        ])
+        ..script([done]);
+      await c.sendText('reserve');
+      expect(c.state.items.whereType<ZiConfirmItem>().single.status, ZiConfirmStatus.expired);
+      await c.close();
+    });
+
+    test('the round passes its deadline to the runner', () async {
+      final deadline = DateTime.utc(2031);
+      turns
+        ..script([
+          started,
+          const ClientApiRequest(callId: 'c_1', tool: 'x', args: {}),
+          TurnPaused(callIds: const ['c_1'], deadline: deadline, maxResultBytes: 32768, turnId: 't1'),
+        ])
+        ..script([done]);
+      await cubit.sendText('go');
+      expect(runner.deadlines.single, deadline);
+    });
   });
 }

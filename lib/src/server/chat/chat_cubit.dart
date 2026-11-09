@@ -41,6 +41,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   final StreamController<ZiComponentItem> _opens = StreamController.broadcast();
 
   StreamSubscription<TurnEvent>? _sub;
+  final Map<String, Completer<bool>> _questions = {};
   Completer<TurnEvent?>? _leg;
   TurnInput? _last;
   int _generation = 0;
@@ -96,6 +97,42 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     }
   }
 
+  /// Shows the question in the chat; completes with the user's answer
+  /// ([answerConfirmation]), or false if the chat is reset or the round ends
+  /// first. Given to the tool runner as its confirmer.
+  Future<bool> confirm(ZiConfirmRequest request) {
+    if (isClosed) return Future.value(false);
+    _questions[request.callId]?.complete(false);
+    final answer = _questions[request.callId] = Completer<bool>();
+    _emit(state.copyWith(items: [...state.items, ZiConfirmItem(request.callId, request.title)]));
+    return answer.future;
+  }
+
+  /// The user's yes or no. A second answer is ignored.
+  void answerConfirmation(String callId, {required bool allow}) {
+    final answer = _questions.remove(callId);
+    if (answer == null || answer.isCompleted) return;
+    answer.complete(allow);
+    _setStatus(callId, allow ? ZiConfirmStatus.allowed : ZiConfirmStatus.declined);
+  }
+
+  /// Questions nobody answered in time.
+  void _expireQuestions() {
+    for (final callId in [..._questions.keys]) {
+      _questions.remove(callId)?.complete(false);
+      _setStatus(callId, ZiConfirmStatus.expired);
+    }
+  }
+
+  void _setStatus(String callId, ZiConfirmStatus status) {
+    _emit(state.copyWith(items: [
+      for (final item in state.items)
+        item is ZiConfirmItem && item.callId == callId && item.status == ZiConfirmStatus.pending
+            ? ZiConfirmItem(item.callId, item.title, status: status)
+            : item,
+    ]));
+  }
+
   /// Shows an error the SDK found itself, before anything was sent (a
   /// recording over 1 MiB).
   void showError(String code, {bool retryable = false}) =>
@@ -149,7 +186,8 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       if (end == null || generation != _generation || isClosed) return;
       switch (end) {
         case TurnPaused():
-          final results = await _tools.runAll(calls);
+          final results = await _tools.runAll(calls, deadline: end.deadline);
+          _expireQuestions();
           if (generation != _generation || isClosed) return;
           stream = _turns.sendResults(end.turnId, results, deadline: end.deadline);
         case TurnDone():
@@ -249,6 +287,10 @@ class ZiChatCubit extends Cubit<ZiChatState> {
 
   void _hangUp() {
     _generation++;
+    for (final answer in _questions.values) {
+      if (!answer.isCompleted) answer.complete(false);
+    }
+    _questions.clear();
     unawaited(_sub?.cancel());
     _sub = null;
     final leg = _leg;

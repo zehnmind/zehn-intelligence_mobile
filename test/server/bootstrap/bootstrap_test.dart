@@ -53,12 +53,47 @@ void main() {
     expect(b.tools.containsKey('locations.get'), isTrue);
   });
 
-  test('a body param makes the tool invalid', () {
+  Map<String, Object?> withTool(String name, Map<String, Object?> tool) {
     final json = bootstrapJson();
-    ((json['tools']! as Map)['locations.get']! as Map)['params'] = [
-      {'name': 'id', 'in': 'body'},
-    ];
-    expect(ZiBootstrap.fromJson(json).tools.containsKey('locations.get'), isFalse);
+    json['tools'] = <String, Object?>{...(json['tools']! as Map<String, Object?>), name: tool};
+    return json;
+  }
+
+  test('a write tool with body params parses and needs confirmation', () {
+    final b = ZiBootstrap.fromJson(withTool('parking.reserve', {
+      'method': 'post',
+      'path': '/parking/reservations',
+      'params': [
+        {'name': 'zone_id', 'in': 'body'},
+        {'name': 'hours', 'in': 'body', 'key': 'duration_hours'},
+      ],
+      'auth': true,
+      'confirm': {'title': {'en': 'Reserve a place in zone {zone_id}?'}},
+    }));
+    final t = b.tools['parking.reserve']!;
+    expect(t.method, 'POST');
+    expect(t.params.map((p) => p.location), [ZiParamIn.body, ZiParamIn.body]);
+    expect(t.params[1].key, 'duration_hours');
+    expect(t.confirm, isTrue);
+    expect(t.confirmTitle, {'en': 'Reserve a place in zone {zone_id}?'});
+  });
+
+  test('writes need confirmation by default, reads do not', () {
+    final b = ZiBootstrap.fromJson(withTool('reservation.cancel', {'method': 'DELETE', 'path': '/r/{id}', 'params': [{'name': 'id', 'in': 'path'}]}));
+    expect(b.tools['reservation.cancel']!.confirm, isTrue);
+    expect(b.tools['stores.list']!.confirm, isFalse);
+    final quiet = ZiBootstrap.fromJson(withTool('favorite.add', {'method': 'PUT', 'path': '/f', 'confirm': false}));
+    expect(quiet.tools['favorite.add']!.confirm, isFalse);
+  });
+
+  test('body params on a GET make the tool invalid', () {
+    final b = ZiBootstrap.fromJson(withTool('bad.get', {'method': 'GET', 'path': '/x', 'params': [{'name': 'a', 'in': 'body'}]}));
+    expect(b.tools.containsKey('bad.get'), isFalse);
+  });
+
+  test('an unknown method makes the tool invalid', () {
+    final b = ZiBootstrap.fromJson(withTool('bad.trace', {'method': 'TRACE', 'path': '/x'}));
+    expect(b.tools.containsKey('bad.trace'), isFalse);
   });
 
   test('unknown fields are ignored', () {

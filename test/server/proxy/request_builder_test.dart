@@ -38,9 +38,33 @@ void main() {
     expect(r.headers, {'Accept-Language': 'ru', 'X-App': '1.2.0+5/ios', 'X-Tool': 'on'});
   });
 
-  test('rejects POST with method_not_allowed', () {
-    const tool = ZiHttpTool(method: 'POST', path: '/x');
+  test('rejects an unknown method with method_not_allowed', () {
+    const tool = ZiHttpTool(method: 'TRACE', path: '/x');
     expect(() => buildRequest(tool, {}, const ZiApiSettings(), ctx), toolError('method_not_allowed'));
+  });
+
+  test('POST puts body params in a JSON body, keeping their types', () {
+    const tool = ZiHttpTool(method: 'POST', path: '/parking/reservations', params: [
+      ZiParam(name: 'zone_id', location: ZiParamIn.body),
+      ZiParam(name: 'hours', location: ZiParamIn.body, key: 'duration_hours'),
+      ZiParam(name: 'plates', location: ZiParamIn.body),
+      ZiParam(name: 'note', location: ZiParamIn.body),
+    ]);
+    final r = buildRequest(tool, {'zone_id': 7, 'hours': 2.5, 'plates': ['01A123BC']}, const ZiApiSettings(), ctx);
+    expect(r.method, 'POST');
+    expect(r.body, {'zone_id': 7, 'duration_hours': 2.5, 'plates': ['01A123BC']});
+    expect(r.query, isEmpty);
+  });
+
+  test('a GET has no body', () {
+    expect(buildRequest(venue, {'id': '7'}, const ZiApiSettings(), ctx).body, isNull);
+  });
+
+  test('DELETE fills its path', () {
+    const tool = ZiHttpTool(method: 'DELETE', path: '/r/{id}', params: [ZiParam(name: 'id', location: ZiParamIn.path)]);
+    final r = buildRequest(tool, {'id': 'x9'}, const ZiApiSettings(), ctx);
+    expect(r.method, 'DELETE');
+    expect(r.path, '/r/x9');
   });
 
   test('rejects a full-URL path with host_not_allowed', () {

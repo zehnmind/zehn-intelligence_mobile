@@ -31,7 +31,10 @@ voice. `MOBILE_INTEGRATION.md` (2026-11-06) says the SDK talks only to `zi_conso
 
 Our calls (the user can revisit them):
 
-- **Read-only.** The proxy makes `GET` requests only. Anything else answers `method_not_allowed`.
+- **Writes ask first.** Tools may use `GET`, `POST`, `PUT`, `PATCH` or `DELETE`. Every
+  non-`GET` tool asks the user in the chat ("Allow" / "Cancel") before the SDK calls the
+  customer API, unless the console sets `confirm: false`. (Changed 2026-11-09: the first version
+  was GET-only.)
 - **Escape hatch.** `registerTool` / `registerComponent` stay. An in-app handler or builder
   wins over the console's definition. TCM keeps working unchanged while it migrates.
 - **Old engine stays.** The on-device engine (`ZehnIntelligence.start`, transports, packs)
@@ -102,6 +105,18 @@ published spec for the key's track.
       "path": "/location/venues/{id}",
       "params": [{ "name": "id", "in": "path" }],
       "auth": false
+    },
+    "parking.reserve": {
+      "method": "POST",
+      "path": "/parking/reservations",
+      "params": [
+        { "name": "zone_id", "in": "body" },
+        { "name": "hours", "in": "body", "key": "duration_hours" }
+      ],
+      "auth": true,
+      "confirm": {
+        "title": { "uz": "{zone_id}-zonada joy band qilinsinmi?", "ru": "Забронировать место в зоне {zone_id}?", "en": "Reserve a place in zone {zone_id}?" }
+      }
     }
   },
   "components": {
@@ -114,6 +129,12 @@ published spec for the key's track.
 
 Rules the SDK applies:
 
+- `method` is `GET`, `POST`, `PUT`, `PATCH` or `DELETE`; anything else leaves the tool out.
+- `params[].in` is `path`, `query`, `header` or `body`. `body` params go into a JSON body under
+  `key` (default the argument name), keeping their JSON types; they are not allowed on `GET`.
+- `confirm`: `true`, `false`, or `{"title": {lang: text}}` (which means `true`). It defaults to
+  `true` for every method but `GET`. `{name}` placeholders in the title are filled from the call's
+  arguments; without a title the chat asks "Allow this action?".
 - `path` must start with `/`. A path that is a full URL is refused (`host_not_allowed`).
 - Path parameters are URL-encoded, so `../admin` cannot change the path.
 - In callbacks mode the request goes to `apiBaseUrl ?? api.base_url`, and its host must be in
@@ -156,7 +177,10 @@ As `MOBILE_INTEGRATION.md`, with these SDK specifics:
   its calls at once, each through: in-app handler → console HTTP tool → error
   `handler_not_registered`. Each call has 20 s; results over 32 KB become `result_too_large`.
   All results go in one `tool-results` request.
-- Proxy errors the model reads: `not_signed_in`, `host_not_allowed`, `method_not_allowed`,
+- A tool that needs confirmation first shows a card in the chat. The 20 s start after the user
+  allows it. A "Cancel", or no answer until 5 s before the round's `turn.paused` deadline,
+  becomes `user_declined` and no request is made. In-app handlers never ask.
+- Proxy errors the model reads: `user_declined`, `not_signed_in`, `host_not_allowed`, `method_not_allowed`,
   `invalid_args` (a path parameter missing), `http_error` (message names the status),
   `network_error`, `timeout`, `handler_failed`, `result_too_large`.
 - A 401 from the customer API: in callbacks mode call `onUnauthorized` once and retry once;
@@ -193,8 +217,7 @@ catalog lacks draws nothing in release builds and a red note in debug builds. Th
 ## Not in this change
 
 Backend endpoints (`/v1/bootstrap`, `/v1/installs`, components in `mount_component`), the
-analyzer, the console editor, the history screen, write requests, deleting the old engine,
-TCM's migration.
+analyzer, the console editor, the history screen, deleting the old engine, TCM's migration.
 
 ## Done means
 

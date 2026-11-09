@@ -44,6 +44,22 @@ final class ZiComponentItem extends ZiChatItem {
   List<Object?> get props => [callId, component, kind, data];
 }
 
+enum ZiConfirmStatus { pending, allowed, declined, expired }
+
+/// A data-changing call waiting for (or past) the user's yes or no.
+final class ZiConfirmItem extends ZiChatItem {
+  const ZiConfirmItem(this.callId, this.title, {this.status = ZiConfirmStatus.pending});
+
+  final String callId;
+
+  /// The console's question; null shows the SDK's own words.
+  final String? title;
+  final ZiConfirmStatus status;
+
+  @override
+  List<Object?> get props => [callId, title, status];
+}
+
 final class ZiErrorItem extends ZiChatItem {
   const ZiErrorItem(this.code, {this.retryable = false});
 

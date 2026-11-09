@@ -133,5 +133,11 @@ void main() {
       expect(results.single.errorCode, 'not_signed_in');
       expect(server.requests.where((r) => r.path == '/loyalty/cards/my'), isEmpty);
     });
+
+    test('the chat answers the tool runner\'s questions', () async {
+      server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 200, bootstrapJson()));
+      final runtime = await create();
+      expect(runtime.tools.confirmer, isNotNull);
+    });
   });
 }

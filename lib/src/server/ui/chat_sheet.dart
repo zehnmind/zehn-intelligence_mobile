@@ -532,7 +532,9 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   // ---- conversation --------------------------------------------------------
 
   Widget _conversation(ZiChatState state, ZiChatStyle s, ZiStrings words) {
-    final thinking = state.busy && state.items.lastOrNull is! ZiAssistantItem;
+    final last = state.items.lastOrNull;
+    final waitingForUser = last is ZiConfirmItem && last.status == ZiConfirmStatus.pending;
+    final thinking = state.busy && last is! ZiAssistantItem && !waitingForUser;
     final followUps = !state.busy && state.items.isNotEmpty && state.suggestions.isNotEmpty;
     return Column(children: [
       Expanded(
@@ -591,6 +593,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       ),
     ),
     ZiComponentItem() => _component(item),
+    ZiConfirmItem() => _confirmCard(item, s, words),
     ZiErrorItem() => Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -613,6 +616,52 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       ]),
     ),
   };
+
+  /// A data-changing call: the user allows or cancels it here.
+  Widget _confirmCard(ZiConfirmItem item, ZiChatStyle s, ZiStrings words) {
+    final pending = item.status == ZiConfirmStatus.pending;
+    Widget button(String text, Key key, {required bool allow}) => Expanded(
+      child: GestureDetector(
+        key: key,
+        behavior: HitTestBehavior.opaque,
+        onTap: () => widget.cubit.answerConfirmation(item.callId, allow: allow),
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: allow ? s.accent : s.fill, borderRadius: BorderRadius.circular(100)),
+          child: Text(text, style: s.smallMedium.copyWith(color: allow ? s.onAccent : s.ink)),
+        ),
+      ),
+    );
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: s.background,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: pending ? s.accent : s.line),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(item.title ?? words.confirmDefault, style: s.bodyMedium),
+        const SizedBox(height: 12),
+        if (pending)
+          Row(children: [
+            button(words.decline, const ValueKey('zi-decline'), allow: false),
+            const SizedBox(width: 8),
+            button(words.allow, const ValueKey('zi-allow'), allow: true),
+          ])
+        else
+          Text(
+            switch (item.status) {
+              ZiConfirmStatus.allowed => words.allowed,
+              ZiConfirmStatus.declined => words.declined,
+              _ => words.expired,
+            },
+            style: s.small.copyWith(color: s.muted),
+          ),
+      ]),
+    );
+  }
 
   Widget _inputBar(ZiChatState state, ZiChatStyle s, ZiStrings words) {
     final hasText = _text.text.trim().isNotEmpty;

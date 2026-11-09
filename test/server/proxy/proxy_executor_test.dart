@@ -188,4 +188,36 @@ void main() {
     final proxy = ZiProxyExecutor(isSignedIn: () => false);
     expect(await proxy.call(cinema, {}, boot, ctx), {'id': 1, 'name': 'Cinematica'});
   });
+
+  const reserve = ZiHttpTool(
+    method: 'POST',
+    path: '/parking/reservations',
+    params: [ZiParam(name: 'zone_id', location: ZiParamIn.body), ZiParam(name: 'hours', location: ZiParamIn.body)],
+  );
+
+  test('POST sends the JSON body with its content type', () async {
+    server.on('POST', '/parking/reservations', (req, _) => respondJson(req, 201, {'id': 'r1'}));
+    expect(await ZiProxyExecutor().call(reserve, {'zone_id': 7, 'hours': 2}, boot, ctx), {'id': 'r1'});
+    final rec = server.requests.single;
+    expect(rec.method, 'POST');
+    expect(rec.json, {'zone_id': 7, 'hours': 2});
+    expect(rec.headers['content-type'], contains('application/json'));
+  });
+
+  test('the app client sends the body too', () async {
+    server.on('POST', '/parking/reservations', (req, _) => respondJson(req, 200, {'ok': true}));
+    final proxy = ZiProxyExecutor(appClient: Dio(BaseOptions(baseUrl: server.url.toString())));
+    await proxy.call(reserve, {'zone_id': 3}, boot, ctx);
+    expect(server.requests.single.json, {'zone_id': 3});
+  });
+
+  test('a 204 with no body is null', () async {
+    const cancel = ZiHttpTool(method: 'DELETE', path: '/r/{id}', params: [ZiParam(name: 'id', location: ZiParamIn.path)]);
+    server.on('DELETE', '/r/x9', (req, _) async {
+      req.response.statusCode = 204;
+      await req.response.close();
+    });
+    expect(await ZiProxyExecutor().call(cancel, {'id': 'x9'}, boot, ctx), isNull);
+    expect(server.requests.single.method, 'DELETE');
+  });
 }

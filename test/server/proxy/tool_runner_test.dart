@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -110,5 +111,103 @@ void main() {
     );
     final results = await quick.runAll([call('a', 'nope')]).timeout(const Duration(seconds: 1));
     expect(results.single.errorCode, 'handler_not_registered');
+  });
+
+  group('writes', () {
+    Future<void> publishReserve() async {
+      final json = bootstrapJson(baseUrl: server.url.toString());
+      json['tools'] = <String, Object?>{
+        ...(json['tools']! as Map<String, Object?>),
+        'parking.reserve': {
+          'method': 'POST',
+          'path': '/parking/reservations',
+          'params': [
+            {'name': 'zone_id', 'in': 'body'},
+          ],
+          'confirm': {
+            'title': {'en': 'Reserve a place in zone {zone_id}?', 'ru': 'Забронировать место в зоне {zone_id}?'},
+          },
+        },
+      };
+      server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 200, json));
+      server.on('POST', '/parking/reservations', (req, _) => respondJson(req, 201, {'id': 'r1'}));
+      await bootstrap.refresh();
+      server.requests.clear();
+    }
+
+    ZiToolRunner asking(ZiConfirmer? confirmer, {Duration timeout = const Duration(seconds: 20)}) => ZiToolRunner(
+      handlers: const {},
+      proxy: ZiProxyExecutor(),
+      bootstrap: bootstrap,
+      context: () => ctx,
+      timeout: timeout,
+      confirmMargin: Duration.zero,
+    )..confirmer = confirmer;
+
+    test('a write asks first and runs when allowed', () async {
+      await publishReserve();
+      final asked = <ZiConfirmRequest>[];
+      final results = await asking((r) async {
+        asked.add(r);
+        return true;
+      }).runAll([call('c1', 'parking.reserve', {'zone_id': 7})]);
+      expect(asked.single.callId, 'c1');
+      expect(asked.single.tool, 'parking.reserve');
+      expect(results.single.data, {'id': 'r1'});
+      expect(server.requests.single.method, 'POST');
+    });
+
+    test('the question fills placeholders in the user language', () async {
+      await publishReserve();
+      final asked = <ZiConfirmRequest>[];
+      await asking((r) async {
+        asked.add(r);
+        return false;
+      }).runAll([call('c1', 'parking.reserve', {'zone_id': 7})]);
+      expect(asked.single.title, 'Забронировать место в зоне 7?');
+    });
+
+    test('a declined write is user_declined and makes no request', () async {
+      await publishReserve();
+      final results = await asking((r) async => false).runAll([call('c1', 'parking.reserve', {'zone_id': 7})]);
+      expect(results.single.errorCode, 'user_declined');
+      expect(server.requests, isEmpty);
+    });
+
+    test('a write with no way to ask is user_declined', () async {
+      await publishReserve();
+      final results = await asking(null).runAll([call('c1', 'parking.reserve', {'zone_id': 7})]);
+      expect(results.single.errorCode, 'user_declined');
+      expect(server.requests, isEmpty);
+    });
+
+    test('waiting for the user does not count toward the tool timeout', () async {
+      await publishReserve();
+      final results = await asking((r) async {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        return true;
+      }, timeout: const Duration(milliseconds: 150)).runAll([call('c1', 'parking.reserve', {'zone_id': 7})]);
+      expect(results.single.ok, isTrue);
+    });
+
+    test('no answer before the deadline is user_declined', () async {
+      await publishReserve();
+      final never = Completer<bool>();
+      final results = await asking((r) => never.future)
+          .runAll([call('c1', 'parking.reserve', {'zone_id': 7})], deadline: DateTime.now().add(const Duration(milliseconds: 200)))
+          .timeout(const Duration(seconds: 2));
+      expect(results.single.errorCode, 'user_declined');
+      expect(server.requests, isEmpty);
+    });
+
+    test('reads never ask', () async {
+      await publishReserve();
+      var asked = 0;
+      await asking((r) async {
+        asked++;
+        return true;
+      }).runAll([call('c1', 'locations.get', {'id': '7'})]);
+      expect(asked, 0);
+    });
   });
 }
