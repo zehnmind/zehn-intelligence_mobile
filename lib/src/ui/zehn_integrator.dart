@@ -1,5 +1,9 @@
-import 'package:flutter/widgets.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+
+import '../server/runtime.dart';
+import '../server/ui/strings.dart';
 import 'widgets/agent_button.dart';
 import 'zehn_intelligence.dart';
 
@@ -47,6 +51,15 @@ class ZehnAiButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final runtime = ZiRuntime.instance;
+    if (runtime != null) {
+      final words = ZiStrings.of(runtime.language);
+      void open() => unawaited(runtime.openChat(context, title: title));
+      final glyph = icon ?? const Icon(Icons.auto_awesome);
+      return mini
+          ? FloatingActionButton(onPressed: open, tooltip: label ?? words.ask, child: glyph)
+          : FloatingActionButton.extended(onPressed: open, icon: glyph, label: Text(label ?? words.ask));
+    }
     if (!ZehnIntelligence.isInitialized) {
       return const SizedBox.shrink();
     }

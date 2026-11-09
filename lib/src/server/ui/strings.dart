@@ -12,6 +12,7 @@ class ZiStrings {
   final Map<String, String> _w;
 
   String get title => _w['title']!;
+  String get ask => _w['ask']!;
   String get placeholder => _w['placeholder']!;
   String get send => _w['send']!;
   String get holdToSpeak => _w['holdToSpeak']!;
@@ -35,6 +36,7 @@ class ZiStrings {
 
   static const _uz = {
     'title': 'Yordamchi',
+    'ask': 'So‘rash',
     'placeholder': 'Savol yozing…',
     'send': 'Yuborish',
     'holdToSpeak': 'Gapirish uchun bosib turing',
@@ -56,6 +58,7 @@ class ZiStrings {
 
   static const _ru = {
     'title': 'Ассистент',
+    'ask': 'Спросить',
     'placeholder': 'Напишите вопрос…',
     'send': 'Отправить',
     'holdToSpeak': 'Удерживайте, чтобы говорить',
@@ -77,6 +80,7 @@ class ZiStrings {
 
   static const _en = {
     'title': 'Assistant',
+    'ask': 'Ask',
     'placeholder': 'Ask a question…',
     'send': 'Send',
     'holdToSpeak': 'Hold to speak',

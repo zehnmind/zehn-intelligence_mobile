@@ -28,6 +28,8 @@ import '../core/transport/example_transport.dart';
 import '../core/transport/fallback_transport.dart';
 import '../core/transport/openai_compatible_transport.dart';
 import '../core/transport/zehn.dart';
+import '../server/api/client_info.dart';
+import '../server/runtime.dart';
 import '../version.dart';
 import '../voice/zehn_voice.dart';
 import 'chat/agent_chat_bloc.dart';
@@ -101,31 +103,42 @@ class ZehnIntelligence {
   static ZehnIntelligence? instance;
 
   /// True when the assistant has been started and is ready.
-  static bool get isInitialized => instance != null;
+  static bool get isInitialized => ZiRuntime.instance != null || instance != null;
 
   /// Changes the active language of the assistant.
   static void setLanguage(String language) {
     instance?.displayLanguage = language;
+    ZiRuntime.instance?.language = language;
   }
 
-  /// Informs the assistant that the user has signed in.
+  /// Informs the assistant that the user has signed in. A [token] is a Zehn
+  /// user token from the app's own backend.
   static void signedIn({String? token}) {
-    // Stored for user context
+    if (token != null && token.isNotEmpty) setUser(token);
   }
 
-  /// Sets the user token for the assistant.
+  /// A Zehn user token from the app's backend (`POST /v1/user-tokens` with
+  /// its server key). [onTokenExpired] gets a new one when the server says it
+  /// expired. Without one, the assistant uses an anonymous token per install.
   static void setUser(dynamic token, {FutureOr<dynamic> Function()? onTokenExpired}) {
-    // Stored for user context
+    var first = true;
+    ZiRuntime.instance?.setUserToken(() async {
+      if (first) {
+        first = false;
+        if (token is String && token.isNotEmpty) return token;
+      }
+      final next = await onTokenExpired?.call();
+      return next is String && next.isNotEmpty ? next : null;
+    });
   }
 
   /// Informs the assistant that the user has signed out.
-  static void signedOut() {
-    instance?.clearUserData();
-  }
+  static void signedOut() => clearUser();
 
-  /// Clears the user token from the assistant.
+  /// Forgets the user's token and conversation.
   static void clearUser() {
     instance?.clearUserData();
+    unawaited(ZiRuntime.instance?.clearUser());
   }
 
   /// Registry of tools added via the integrator.
@@ -175,15 +188,78 @@ class ZehnIntelligence {
     registeredComponents[name] = builder;
   }
 
-  /// Quick initialization helper used by the integrator.
-  /// Reads configuration from [configPath] (defaults to 'lib/config/zehn-intelligence.prod.json')
-  /// or from environment variables (--dart-define / --dart-define-from-file).
-  static Future<ZehnIntelligence> init({
+  /// Starts the assistant. The only call an app needs, in `main()`:
+  ///
+  /// ```dart
+  /// await ZehnIntelligence.init(
+  ///   token: 'zi_prod_…',                    // the app key from the console
+  ///   client: di<Dio>(),                     // or accessToken: / onUnauthorized:
+  ///   openRoute: (route) => router.push(route),
+  /// );
+  /// ```
+  ///
+  /// The assistant talks only to the Zehn console ([consoleUrl], default
+  /// `https://zi-console-api.zehnmind.com`). Tools run as requests to the
+  /// app's own API, built from what the console publishes: through the app's
+  /// [client] (its base URL, auth and refresh), or with [accessToken],
+  /// [onUnauthorized] and the console's (or [apiBaseUrl]'s) base URL. Pages
+  /// open through [openRoute]. [userToken] is a Zehn user token from the
+  /// app's backend; without one an anonymous token per install is used.
+  ///
+  /// [token] falls back to the config file at [configPath] and then to
+  /// `--dart-define`. Throws [ZiConfigException] when there is no app key; a
+  /// network problem never throws (the last saved start-up data is used).
+  /// [appName] and [onOpenRoute] are accepted for older code and unused.
+  static Future<void> init({
+    String? token,
+    Uri? consoleUrl,
+    Dio? client,
+    FutureOr<String?> Function()? accessToken,
+    FutureOr<bool> Function()? onUnauthorized,
+    Uri? apiBaseUrl,
+    FutureOr<String?> Function()? userToken,
+    FutureOr<void> Function(String route)? openRoute,
     String? appName,
     String configPath = 'lib/config/zehn-intelligence.prod.json',
     FutureOr<void> Function(BuildContext, dynamic)? onOpenRoute,
   }) async {
     WidgetsFlutterBinding.ensureInitialized();
+    final config = resolveInitConfig(
+      token: token,
+      consoleUrl: consoleUrl,
+      fileConfig: await _readConfigFile(configPath),
+      defines: const {
+        'zi_app_key': String.fromEnvironment('zi_app_key'),
+        'ZEHN_API_KEY': String.fromEnvironment('ZEHN_API_KEY'),
+        'zi_console_url': String.fromEnvironment('zi_console_url'),
+        'ZEHN_INTELLIGENCE_CONFIG_URL': String.fromEnvironment('ZEHN_INTELLIGENCE_CONFIG_URL'),
+        'zi_spec_version': String.fromEnvironment('zi_spec_version'),
+      },
+    );
+    final package = await PackageInfo.fromPlatform();
+    final build = package.buildNumber.isEmpty ? '' : '+${package.buildNumber}';
+    ZiRuntime.instance = await ZiRuntime.create(
+      config: config,
+      info: ZiClientInfo(
+        appKey: config.appKey,
+        packageName: package.packageName,
+        appVersion: '${package.version}$build',
+        sdkVersion: zehnIntelligenceVersion,
+        platform: Platform.isIOS ? 'ios' : (Platform.isAndroid ? 'android' : Platform.operatingSystem),
+      ),
+      client: client,
+      accessToken: accessToken,
+      onUnauthorized: onUnauthorized,
+      apiBaseUrl: apiBaseUrl,
+      userToken: userToken,
+      openRoute: openRoute,
+      handlers: registeredTools,
+      builders: registeredComponents,
+    );
+  }
+
+  /// The console config file, if the app bundles one; only for fallbacks.
+  static Future<Map<String, Object?>?> _readConfigFile(String configPath) async {
     Map<String, dynamic>? config;
 
     for (final path in [
@@ -218,34 +294,7 @@ class ZehnIntelligence {
       }
     }
 
-    final key = config?['zi_app_key'] as String? ??
-        config?['ZEHN_API_KEY'] as String? ??
-        const String.fromEnvironment(
-          'zi_app_key',
-          defaultValue: String.fromEnvironment('ZEHN_API_KEY'),
-        );
-
-    final console = config?['zi_console_url'] as String? ??
-        config?['ZEHN_INTELLIGENCE_CONFIG_URL'] as String? ??
-        const String.fromEnvironment(
-          'zi_console_url',
-          defaultValue: String.fromEnvironment('ZEHN_INTELLIGENCE_CONFIG_URL'),
-        );
-
-    final appId = config?['zi_app_id'] as String? ??
-        const String.fromEnvironment('zi_app_id');
-
-    final proxyStr = config?['proxy'] as String? ??
-        const String.fromEnvironment('ZEHN_PROXY');
-
-    return await start(
-      appName: appName ?? config?['zi_package_name'] as String? ?? 'App',
-      apiKey: key,
-      configUrl: console.isNotEmpty ? Uri.tryParse(console) : null,
-      configKey: key,
-      agentId: appId.isNotEmpty ? appId : null,
-      proxy: proxyStr.isNotEmpty ? Uri.tryParse(proxyStr) : null,
-    );
+    return config;
   }
 
   /// Everything set up in one call — the model, voice, tools and packs:
@@ -283,6 +332,10 @@ class ZehnIntelligence {
   ///
   /// The intelligence is also [instance], so `AgentButton` and `AgentChatSheet`
   /// work without an `AgentScope`.
+  ///
+  /// Deprecated: this runs the model on the phone against `api.zehnmind.com`,
+  /// which the console backend no longer allows.
+  @Deprecated('Use ZehnIntelligence.init')
   static Future<ZehnIntelligence> start({
     String? appName,
     AgentProfile? profile,
