@@ -6,7 +6,7 @@ backend must store, validate and send so the mobile SDK can draw them.
 Matches SDK `0.4.0` (`zehn_intelligence`, `main`). Related documents:
 
 - `docs/MOBILE_INTEGRATION.md`: the turn protocol (`/v1/turns`, SSE events, tool results).
-- `docs/superpowers/specs/2026-11-09-server-proxy-design.md`: the full SDK design, including `GET /v1/bootstrap`.
+- `docs/design/server-proxy.md`: the full SDK design, including `GET /v1/bootstrap`.
 
 ---
 
