@@ -17,6 +17,8 @@ class ZiBootstrap {
     required this.tools,
     required this.components,
     required this.theme,
+    required this.welcomeTitle,
+    required this.welcomeSubtitle,
   }) : _raw = raw;
 
   factory ZiBootstrap.fromJson(Object? json) {
@@ -47,6 +49,7 @@ class ZiBootstrap {
       });
     }
     final theme = map['theme'];
+    final copy = map['copy'];
     return ZiBootstrap._(
       raw: map,
       specVersion: _string(map['spec_version']),
@@ -58,6 +61,8 @@ class ZiBootstrap {
       tools: tools,
       components: components,
       theme: theme is Map ? theme.cast<String, Object?>() : const {},
+      welcomeTitle: copy is Map ? _stringMap(copy['welcome_title']) : const {},
+      welcomeSubtitle: copy is Map ? _stringMap(copy['welcome_subtitle']) : const {},
     );
   }
 
@@ -75,6 +80,11 @@ class ZiBootstrap {
   final Map<String, ZiHttpTool> tools;
   final Map<String, ZiComponentDef> components;
   final Map<String, Object?> theme;
+
+  /// The chat's welcome words per language, from the console (`copy`).
+  /// Empty: the SDK's own words.
+  final Map<String, String> welcomeTitle;
+  final Map<String, String> welcomeSubtitle;
 
   Map<String, Object?> toJson() => _raw;
 }

@@ -21,6 +21,17 @@ class ZiStrings {
   String get newChat => _w['newChat']!;
   String get close => _w['close']!;
   String get typeInstead => _w['typeInstead']!;
+  String get chat => _w['chat']!;
+  String get back => _w['back']!;
+  String get welcomeTitle => _w['welcomeTitle']!;
+  String get welcomeSubtitle => _w['welcomeSubtitle']!;
+  String get tapToSpeak => _w['tapToSpeak']!;
+  String get tryAsking => _w['tryAsking']!;
+  String get typeMessage => _w['typeMessage']!;
+  String get thinking => _w['thinking']!;
+
+  /// Not translated: the brand line under the title.
+  String get poweredBy => 'Powered by zehnmind.ai';
 
   String error(String code) => _w[switch (code) {
     'network_error' || 'stream_interrupted' || 'server_unavailable' => 'e.connection',
@@ -35,6 +46,14 @@ class ZiStrings {
   }]!;
 
   static const _uz = {
+    'chat': 'Suhbat',
+    'back': 'Orqaga',
+    'welcomeTitle': 'Qanday yordam bera olaman?',
+    'welcomeSubtitle': 'Ilova haqida istalgan savolni bering.',
+    'tapToSpeak': 'Gapirish uchun bosing',
+    'tryAsking': 'So‘rab ko‘ring',
+    'typeMessage': 'Xabar yozish',
+    'thinking': 'O‘ylayapman…',
     'title': 'Yordamchi',
     'ask': 'So‘rash',
     'placeholder': 'Savol yozing…',
@@ -57,6 +76,14 @@ class ZiStrings {
   };
 
   static const _ru = {
+    'chat': 'Чат',
+    'back': 'Назад',
+    'welcomeTitle': 'Чем могу помочь?',
+    'welcomeSubtitle': 'Задайте любой вопрос о приложении.',
+    'tapToSpeak': 'Нажмите, чтобы говорить',
+    'tryAsking': 'Попробуйте спросить',
+    'typeMessage': 'Написать сообщение',
+    'thinking': 'Думаю…',
     'title': 'Ассистент',
     'ask': 'Спросить',
     'placeholder': 'Напишите вопрос…',
@@ -79,6 +106,14 @@ class ZiStrings {
   };
 
   static const _en = {
+    'chat': 'Chat',
+    'back': 'Back',
+    'welcomeTitle': 'How can I help you?',
+    'welcomeSubtitle': 'Ask me anything about this app.',
+    'tapToSpeak': 'Tap to speak',
+    'tryAsking': 'Try asking',
+    'typeMessage': 'Type a message',
+    'thinking': 'Thinking…',
     'title': 'Assistant',
     'ask': 'Ask',
     'placeholder': 'Ask a question…',

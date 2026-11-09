@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -8,20 +7,24 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../ui/zehn_integrator.dart' show ZiComponentController;
-import '../../voice/voice_recorder.dart';
 import '../bootstrap/bootstrap.dart';
 import '../bootstrap/bootstrap_repository.dart';
 import '../chat/chat_cubit.dart';
 import '../chat/chat_state.dart';
 import '../surface/surface.dart';
 import '../surface/surface_view.dart';
+import 'chrome.dart';
+import 'soap_bubble.dart';
 import 'strings.dart';
+import 'style.dart';
+import 'voice.dart';
 
 /// An in-app component builder (`ZehnIntelligence.registerComponent`).
 typedef ZiComponentBuilder = Widget Function(BuildContext context, Map<String, Object?> props, ZiComponentController controller);
 
-/// The chat, in a bottom sheet: messages, console-made cards, chips, and a
-/// composer with hold-to-speak when the app has speech.
+/// The assistant, in a bottom sheet, in the zehn/intelligence design:
+/// a landing (welcome, the soap-bubble orb, suggestions), listening (halo
+/// and waveform) and the conversation.
 class ZiChatSheet extends StatefulWidget {
   const ZiChatSheet({
     super.key,
@@ -31,6 +34,7 @@ class ZiChatSheet extends StatefulWidget {
     required this.builders,
     this.openRoute,
     this.title,
+    this.recorderFactory,
   });
 
   static const maxRecordingBytes = 1024 * 1024;
@@ -43,6 +47,9 @@ class ZiChatSheet extends StatefulWidget {
   final FutureOr<void> Function(String route)? openRoute;
   final String? title;
 
+  /// The microphone; the SDK's own recorder when null.
+  final ZiVoiceRecorder Function()? recorderFactory;
+
   static Future<void> show(
     BuildContext context, {
     required ZiChatCubit cubit,
@@ -51,60 +58,83 @@ class ZiChatSheet extends StatefulWidget {
     required Map<String, ZiComponentBuilder> builders,
     required FutureOr<void> Function(String route)? openRoute,
     String? title,
-  }) => showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    showDragHandle: true,
-    // The padding lifts the whole sheet, composer included, above the keyboard.
-    builder: (sheetContext) => Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheetContext).bottom),
-      child: FractionallySizedBox(
-        heightFactor: 0.9,
-        child: ZiChatSheet(
-          cubit: cubit,
-          bootstrap: bootstrap,
-          language: language,
-          builders: builders,
-          openRoute: openRoute,
-          title: title,
+    ZiVoiceRecorder Function()? recorderFactory,
+  }) {
+    final style = ZiChatStyle.fromTheme(bootstrap.current?.theme ?? const {});
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: style.barrier,
+      // The padding lifts the whole sheet, composer included, above the keyboard.
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheetContext).bottom),
+        child: FractionallySizedBox(
+          heightFactor: 0.9,
+          alignment: Alignment.bottomCenter,
+          child: ZiChatSheet(
+            cubit: cubit,
+            bootstrap: bootstrap,
+            language: language,
+            builders: builders,
+            openRoute: openRoute,
+            title: title,
+            recorderFactory: recorderFactory,
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 
   @override
   State<ZiChatSheet> createState() => _ZiChatSheetState();
 }
+
+enum _View { landing, listening, conversation }
 
 class _ZiChatSheetState extends State<ZiChatSheet> {
   final _text = TextEditingController();
   final _scroll = ScrollController();
   final Set<String> _refreshed = {};
   StreamSubscription<ZiComponentItem>? _opens;
-  AgentVoiceRecorder? _recorder;
-  bool _recording = false;
+  StreamSubscription<double>? _levels;
+  ZiVoiceRecorder? _recorder;
+  bool _typing = false;
+  bool _listening = false;
   bool _closing = false;
+  double _level = 0;
+  DateTime? _startedAt;
 
   ZiStrings get _words => ZiStrings.of(widget.language());
   ZiBootstrap? get _boot => widget.bootstrap.current;
+  ZiChatStyle get _style => ZiChatStyle.fromTheme(_boot?.theme ?? const {});
+  bool get _speech => _boot?.services.contains('stt') ?? false;
 
   @override
   void initState() {
     super.initState();
     _opens = widget.cubit.opens.listen(_open);
+    _text.addListener(() => setState(() {}));
     unawaited(widget.cubit.loadStarterSuggestions());
   }
 
   @override
   void dispose() {
     unawaited(_opens?.cancel());
+    unawaited(_levels?.cancel());
     _text.dispose();
     _scroll.dispose();
     unawaited(_recorder?.dispose());
     // Closing the chat stops spoken replies (MOBILE_INTEGRATION.md, section 4).
     unawaited(widget.cubit.stopAudio());
     super.dispose();
+  }
+
+  _View _view(ZiChatState state) {
+    if (_listening) return _View.listening;
+    if (state.items.isNotEmpty || state.busy || _typing) return _View.conversation;
+    return _View.landing;
   }
 
   // ---- components and actions ----------------------------------------------
@@ -127,11 +157,16 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       }
       return;
     }
+    if (builder == null && def?.surface == null) {
+      debugPrint('zehn_intelligence: nothing to draw for sheet "${item.component}"');
+      return;
+    }
     unawaited(showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,
+      backgroundColor: _style.background,
       builder: (c) => SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         child: builder != null
@@ -142,10 +177,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   }
 
   void _openRoute(String template, Map<String, Object?> data) {
-    final route = template.replaceAllMapped(
-      RegExp(r'\{(\w+)\}'),
-      (m) => Uri.encodeComponent('${data[m[1]] ?? ''}'),
-    );
+    final route = template.replaceAllMapped(RegExp(r'\{(\w+)\}'), (m) => Uri.encodeComponent('${data[m[1]] ?? ''}'));
     final open = widget.openRoute;
     _closeChat();
     if (open != null) unawaited(Future<void>.value(open(route)));
@@ -167,7 +199,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     switch (action.name) {
       case 'ask':
         final text = action.args['text'];
-        if (text is String) unawaited(widget.cubit.sendText(text));
+        if (text is String) _send(text);
       case 'open_route':
         final route = action.args['route'];
         if (route is String && route.startsWith('/')) _openRoute(route, const {});
@@ -211,45 +243,69 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     }
   }
 
-  // ---- composer ------------------------------------------------------------
+  // ---- input ---------------------------------------------------------------
 
-  void _send() {
-    final text = _text.text;
+  void _send(String text) {
     if (text.trim().isEmpty) return;
     _text.clear();
+    _startedAt ??= DateTime.now();
     unawaited(widget.cubit.sendText(text));
   }
 
-  Future<void> _startRecording() async {
-    final recorder = _recorder ??= AgentVoiceRecorder(aac: true);
-    if (await recorder.start() && mounted) setState(() => _recording = true);
+  void _newChat() {
+    widget.cubit.reset();
+    _startedAt = null;
+    setState(() => _typing = false);
+    unawaited(widget.cubit.loadStarterSuggestions());
   }
 
-  Future<void> _stopRecording() async {
-    if (!_recording) return;
-    setState(() => _recording = false);
-    final path = await _recorder?.stop();
-    if (path == null) return;
-    final bytes = await File(path).readAsBytes();
-    await AgentVoiceRecorder.discard(path);
-    if (bytes.isEmpty) return;
+  Future<void> _startListening() async {
+    if (!_speech) {
+      setState(() => _typing = true);
+      return;
+    }
+    final recorder = _recorder ??= (widget.recorderFactory ?? DefaultVoiceRecorder.new)();
+    if (!await recorder.start() || !mounted) return;
+    _stopLevels();
+    _levels = recorder.levels().listen((level) {
+      if (mounted) setState(() => _level = level);
+    });
+    setState(() => _listening = true);
+  }
+
+  /// Not awaited: a level stream's cancel can lag behind the recorder, and
+  /// stop/cancel must not wait on it.
+  void _stopLevels() {
+    unawaited(_levels?.cancel());
+    _levels = null;
+    _level = 0;
+  }
+
+  Future<void> _cancelListening() async {
+    _stopLevels();
+    setState(() => _listening = false);
+    await _recorder?.cancel();
+  }
+
+  Future<void> _finishListening() async {
+    _stopLevels();
+    setState(() => _listening = false);
+    final bytes = await _recorder?.stop();
+    if (bytes == null || bytes.isEmpty || !mounted) return;
+    _startedAt ??= DateTime.now();
     if (bytes.length > ZiChatSheet.maxRecordingBytes) {
       widget.cubit.showError('payload_too_large');
       return;
     }
-    await widget.cubit.sendAudio(
-      base64Encode(bytes),
-      AgentVoiceRecorder.extensionFor(aac: true),
-      voiceReply: _boot?.services.contains('tts') ?? false,
-    );
+    await widget.cubit.sendAudio(base64Encode(bytes), 'm4a', voiceReply: _boot?.services.contains('tts') ?? false);
   }
 
   // ---- layout --------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
+    final s = _style;
     final words = _words;
-    final colors = Theme.of(context).colorScheme;
     return BlocProvider.value(
       value: widget.cubit,
       child: BlocConsumer<ZiChatCubit, ZiChatState>(
@@ -258,135 +314,354 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
           if (_scroll.hasClients) _scroll.jumpTo(_scroll.position.maxScrollExtent);
         }),
         builder: (context, state) {
-          final typing = state.busy && state.items.lastOrNull is! ZiAssistantItem;
-          return Column(children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
-              child: Row(children: [
-                Expanded(child: Text(widget.title ?? words.title, style: Theme.of(context).textTheme.titleMedium)),
-                IconButton(
-                  tooltip: words.newChat,
-                  icon: const Icon(Icons.add_comment_outlined),
-                  onPressed: state.busy
-                      ? null
-                      : () {
-                          widget.cubit.reset();
-                          unawaited(widget.cubit.loadStarterSuggestions());
-                        },
+          final view = _view(state);
+          final keyboard = MediaQuery.viewInsetsOf(context).bottom > 0;
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: s.background,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+            ),
+            child: ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+              child: Stack(children: [
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: ZiTopAura.height,
+                  child: IgnorePointer(
+                    child: AnimatedOpacity(
+                      opacity: view == _View.listening ? 0 : 1,
+                      duration: const Duration(milliseconds: 250),
+                      child: const ZiTopAura(),
+                    ),
+                  ),
                 ),
-                IconButton(
-                  tooltip: words.close,
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).maybePop(),
-                ),
+                Column(children: [
+                  ZiDragHandle(style: s),
+                  _header(view, s, words),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.only(bottom: keyboard ? 0 : MediaQuery.paddingOf(context).bottom),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        child: KeyedSubtree(
+                          key: ValueKey(view),
+                          child: switch (view) {
+                            _View.landing => _landing(state, s, words),
+                            _View.listening => _listeningView(s, words),
+                            _View.conversation => _conversation(state, s, words),
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                ]),
               ]),
             ),
-            Expanded(
-              child: ListView(
-                controller: _scroll,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                children: [
-                  for (final item in state.items) _item(item, words, colors),
-                  if (typing) _bubble(const Text('…'), mine: false, colors: colors),
-                ],
-              ),
-            ),
-            if (!state.busy && state.suggestions.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Wrap(spacing: 8, runSpacing: 4, children: [
-                  for (final s in state.suggestions)
-                    ActionChip(label: Text(s), onPressed: () => unawaited(widget.cubit.sendText(s))),
-                ]),
-              ),
-            _composer(state, words, colors),
-          ]);
+          );
         },
       ),
     );
   }
 
-  Widget _item(ZiChatItem item, ZiStrings words, ColorScheme colors) => switch (item) {
-    ZiUserItem() => _bubble(
-      Text(item.text.isEmpty ? '…' : item.text, style: TextStyle(color: colors.onPrimary)),
-      mine: true,
-      colors: colors,
+  Widget _header(_View view, ZiChatStyle s, ZiStrings words) {
+    if (view == _View.landing) {
+      return ZiHeaderBar(
+        style: s,
+        title: widget.title ?? words.title,
+        subtitle: words.poweredBy,
+        leadingIcon: 'close_line',
+        leadingKey: const ValueKey('zi-close'),
+        leadingLabel: words.close,
+        onLeading: () => Navigator.of(context).maybePop(),
+      );
+    }
+    final started = _startedAt;
+    return ZiHeaderBar(
+      style: s,
+      title: words.chat,
+      subtitle: view == _View.conversation && started != null ? _stamp(started) : null,
+      leadingIcon: 'arrow_left',
+      leadingKey: const ValueKey('zi-back'),
+      leadingLabel: words.back,
+      onLeading: view == _View.listening ? () => unawaited(_cancelListening()) : _newChat,
+    );
+  }
+
+  static String _stamp(DateTime t) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(t.hour)}:${two(t.minute)}, ${two(t.day)}.${two(t.month)}.${t.year}';
+  }
+
+  // ---- landing -------------------------------------------------------------
+
+  Widget _landing(ZiChatState state, ZiChatStyle s, ZiStrings words) {
+    final language = widget.language();
+    final title = _boot?.welcomeTitle[language] ?? words.welcomeTitle;
+    final subtitle = _boot?.welcomeSubtitle[language] ?? words.welcomeSubtitle;
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        physics: const ClampingScrollPhysics(),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(color: s.fill, borderRadius: BorderRadius.circular(20)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    ZiIcon('search_ai', size: 32, color: s.ink),
+                    const SizedBox(height: 8),
+                    Text(title, style: s.bodyMedium),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: s.body.copyWith(color: s.muted)),
+                  ]),
+                ),
+              ),
+              const SizedBox(height: 24),
+              GestureDetector(
+                key: const ValueKey('zi-orb'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => unawaited(_startListening()),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  IgnorePointer(
+                    child: SoapBubble(size: 128, backdrop: s.background, child: const ZiIcon('star_chat', size: 56)),
+                  ),
+                  if (_speech) ...[
+                    const SizedBox(height: 12),
+                    Text(words.tapToSpeak, style: s.body.copyWith(color: s.muted)),
+                  ],
+                ]),
+              ),
+              const SizedBox(height: 24),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Container(height: 1, color: s.line),
+                ),
+                if (state.suggestions.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 20, right: 16),
+                    child: Text(words.tryAsking, style: s.bodyMedium),
+                  ),
+                  const SizedBox(height: 8),
+                  _chips(state.suggestions, s),
+                ],
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: GestureDetector(
+                    onTap: () => setState(() => _typing = true),
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      height: 48,
+                      width: double.infinity,
+                      decoration: BoxDecoration(color: s.fill, borderRadius: BorderRadius.circular(100)),
+                      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        ZiIcon('keyboard', color: s.ink),
+                        const SizedBox(width: 8),
+                        Text(words.typeMessage, style: s.bodyMedium),
+                      ]),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ]),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _chips(List<String> suggestions, ZiChatStyle s) => SizedBox(
+    height: 36,
+    child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemCount: suggestions.length,
+      separatorBuilder: (_, _) => const SizedBox(width: 8),
+      itemBuilder: (context, i) => GestureDetector(
+        onTap: () => _send(suggestions[i]),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(color: s.fill, borderRadius: BorderRadius.circular(100)),
+          alignment: Alignment.center,
+          child: Text(suggestions[i], style: s.smallMedium),
+        ),
+      ),
     ),
-    ZiAssistantItem() => _bubble(
-      MarkdownBody(data: item.text, styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context))),
-      mine: false,
-      colors: colors,
+  );
+
+  // ---- listening -----------------------------------------------------------
+
+  Widget _listeningView(ZiChatStyle s, ZiStrings words) => Column(
+    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    children: [
+      Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
+            const Positioned(left: -36, top: -36, child: IgnorePointer(child: ZiListeningHalo())),
+            SoapBubble(size: 128, backdrop: s.background, drive: _level),
+            ZiIcon('mic_chatbot', size: 56, color: s.faint),
+          ]),
+          const SizedBox(height: 12),
+          Text(words.listening, style: s.body.copyWith(color: s.muted)),
+        ]),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: ZiWaveformBar(
+          style: s,
+          level: _level,
+          onCancel: () => unawaited(_cancelListening()),
+          onStop: () => unawaited(_finishListening()),
+          onSend: () => unawaited(_finishListening()),
+        ),
+      ),
+    ],
+  );
+
+  // ---- conversation --------------------------------------------------------
+
+  Widget _conversation(ZiChatState state, ZiChatStyle s, ZiStrings words) {
+    final thinking = state.busy && state.items.lastOrNull is! ZiAssistantItem;
+    final followUps = !state.busy && state.items.isNotEmpty && state.suggestions.isNotEmpty;
+    return Column(children: [
+      Expanded(
+        child: ListView(
+          controller: _scroll,
+          physics: const ClampingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          children: [
+            for (final item in state.items)
+              Padding(padding: const EdgeInsets.only(bottom: 12), child: _item(item, s, words)),
+            if (thinking)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(children: [
+                  const ZiIcon('sparkles'),
+                  const SizedBox(width: 8),
+                  Text(words.thinking, style: s.body),
+                ]),
+              ),
+          ],
+        ),
+      ),
+      if (followUps) ...[const SizedBox(height: 4), _chips(state.suggestions, s), const SizedBox(height: 4)],
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: _inputBar(state, s, words),
+      ),
+    ]);
+  }
+
+  Widget _item(ZiChatItem item, ZiChatStyle s, ZiStrings words) => switch (item) {
+    ZiUserItem() => Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 300),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(color: s.fill, borderRadius: BorderRadius.circular(20)),
+        child: Text(item.text.isEmpty ? '…' : item.text, style: s.body),
+      ),
     ),
-    ZiComponentItem() => Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: _component(item)),
-    ZiErrorItem() => Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+    ZiAssistantItem() => Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: s.background,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: s.line),
+      ),
+      child: MarkdownBody(
+        data: item.text,
+        styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+          p: s.body,
+          listBullet: s.body,
+          a: s.body.copyWith(color: s.accent),
+        ),
+      ),
+    ),
+    ZiComponentItem() => _component(item),
+    ZiErrorItem() => Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: s.background,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: s.line),
+      ),
       child: Row(children: [
-        Icon(Icons.error_outline, color: colors.error, size: 18),
-        const SizedBox(width: 8),
-        Expanded(child: Text(words.error(item.code), style: TextStyle(color: colors.error))),
-        if (item.retryable) TextButton(onPressed: () => unawaited(widget.cubit.retry()), child: Text(words.retry)),
+        Expanded(child: Text(words.error(item.code), style: s.body.copyWith(color: s.danger))),
+        if (item.retryable)
+          GestureDetector(
+            onTap: () => unawaited(widget.cubit.retry()),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(color: s.fill, borderRadius: BorderRadius.circular(100)),
+              child: Text(words.retry, style: s.smallMedium),
+            ),
+          ),
       ]),
     ),
   };
 
-  Widget _bubble(Widget child, {required bool mine, required ColorScheme colors}) => Align(
-    alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-    child: Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      constraints: const BoxConstraints(maxWidth: 320),
-      decoration: BoxDecoration(
-        color: mine ? colors.primary : colors.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: child,
-    ),
-  );
-
-  Widget _composer(ZiChatState state, ZiStrings words, ColorScheme colors) {
-    final speech = _boot?.services.contains('stt') ?? false;
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-        child: Row(children: [
-          if (speech)
-            GestureDetector(
-              onLongPressStart: state.busy ? null : (_) => unawaited(_startRecording()),
-              onLongPressEnd: (_) => unawaited(_stopRecording()),
-              child: Tooltip(
-                message: words.holdToSpeak,
-                child: Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Icon(Icons.mic_rounded, color: _recording ? colors.error : colors.primary),
-                ),
-              ),
-            ),
-          Expanded(
-            child: _recording
-                ? Text(words.listening, style: TextStyle(color: colors.error))
-                : TextField(
-                    controller: _text,
-                    minLines: 1,
-                    maxLines: 4,
-                    maxLength: ZiChatCubit.maxTextLength,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _send(),
-                    decoration: InputDecoration(
-                      hintText: words.placeholder,
-                      counterText: '',
-                      border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(24))),
-                      isDense: true,
-                    ),
-                  ),
+  Widget _inputBar(ZiChatState state, ZiChatStyle s, ZiStrings words) {
+    final hasText = _text.text.trim().isNotEmpty;
+    final Widget action;
+    if (hasText || !_speech) {
+      action = ZiCircleButton(
+        key: const ValueKey('zi-send'),
+        icon: 'arrow_up',
+        onTap: state.busy || !hasText ? null : () => _send(_text.text),
+        background: hasText && !state.busy ? s.accent : s.accent.withValues(alpha: 0.4),
+        iconColor: s.onAccent,
+        tooltip: words.send,
+      );
+    } else {
+      action = ZiCircleButton(
+        key: const ValueKey('zi-mic'),
+        icon: 'mic_chatbot',
+        onTap: state.busy ? null : () => unawaited(_startListening()),
+        background: s.line,
+        iconColor: s.muted,
+        tooltip: words.holdToSpeak,
+      );
+    }
+    return Row(children: [
+      Expanded(
+        child: TextField(
+          controller: _text,
+          autofocus: _typing && state.items.isEmpty,
+          minLines: 1,
+          maxLines: 4,
+          maxLength: ZiChatCubit.maxTextLength,
+          textInputAction: TextInputAction.send,
+          onSubmitted: _send,
+          style: s.small,
+          cursorColor: s.accent,
+          decoration: InputDecoration(
+            hintText: words.typeMessage,
+            hintStyle: s.small.copyWith(color: s.muted),
+            counterText: '',
+            filled: true,
+            fillColor: s.fill,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
           ),
-          IconButton(
-            tooltip: words.send,
-            icon: const Icon(Icons.send_rounded),
-            onPressed: state.busy ? null : _send,
-          ),
-        ]),
+        ),
       ),
-    );
+      const SizedBox(width: 8),
+      action,
+    ]);
   }
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../server/runtime.dart';
+import '../server/ui/launcher_button.dart';
 import '../server/ui/strings.dart';
 import 'widgets/agent_button.dart';
 import 'zehn_intelligence.dart';
@@ -53,12 +54,13 @@ class ZehnAiButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final runtime = ZiRuntime.instance;
     if (runtime != null) {
-      final words = ZiStrings.of(runtime.language);
-      void open() => unawaited(runtime.openChat(context, title: title));
-      final glyph = icon ?? const Icon(Icons.auto_awesome);
-      return mini
-          ? FloatingActionButton(onPressed: open, tooltip: label ?? words.ask, child: glyph)
-          : FloatingActionButton.extended(onPressed: open, icon: glyph, label: Text(label ?? words.ask));
+      // The zehn/intelligence launcher: a living soap bubble.
+      return ZiLauncherButton(
+        size: mini ? 48 : 64,
+        icon: icon,
+        label: label ?? ZiStrings.of(runtime.language).ask,
+        onTap: () => unawaited(runtime.openChat(context, title: title)),
+      );
     }
     if (!ZehnIntelligence.isInitialized) {
       return const SizedBox.shrink();

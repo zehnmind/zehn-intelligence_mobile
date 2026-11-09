@@ -22,6 +22,7 @@ dependencies:
   record: ^7.1.1
   flutter_markdown_plus: ^1.0.12
   url_launcher: ^6.3.3
+  flutter_svg: ^2.3.2
 
 dev_dependencies:
   bloc_test: ^10.0.0
@@ -32,3 +33,9 @@ dev_dependencies:
     sdk: flutter
   go_router: ^17.5.0
   mocktail: ^1.0.5
+
+flutter:
+  assets:
+    - assets/zi_icons/
+  shaders:
+    - shaders/bubble.frag

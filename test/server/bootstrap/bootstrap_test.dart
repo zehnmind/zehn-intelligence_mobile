@@ -80,4 +80,17 @@ void main() {
     final b = ZiBootstrap.fromJson(bootstrapJson());
     expect(ZiBootstrap.fromJson(b.toJson()).tools.keys, b.tools.keys);
   });
+
+  test('welcome copy is parsed per language', () {
+    final b = ZiBootstrap.fromJson({
+      ...bootstrapJson(),
+      'copy': {
+        'welcome_title': {'en': 'Hi!', 'uz': 'Salom!'},
+        'welcome_subtitle': {'en': 'Find stores.'},
+      },
+    });
+    expect(b.welcomeTitle, {'en': 'Hi!', 'uz': 'Salom!'});
+    expect(b.welcomeSubtitle, {'en': 'Find stores.'});
+    expect(ZiBootstrap.fromJson(bootstrapJson()).welcomeTitle, isEmpty);
+  });
 }
