@@ -29,7 +29,10 @@ import '../core/transport/fallback_transport.dart';
 import '../core/transport/openai_compatible_transport.dart';
 import '../core/transport/zehn.dart';
 import '../server/api/client_info.dart';
+import '../server/app_file.dart';
+import '../server/app_route.dart';
 import '../server/runtime.dart';
+import '../server/ui/assistant_overlay.dart';
 import '../version.dart';
 import '../voice/zehn_voice.dart';
 import 'chat/agent_chat_bloc.dart';
@@ -262,6 +265,42 @@ class ZehnIntelligence {
     );
   }
 
+  /// [start] with a Dio: the console's file, the app's Dio, the SDK's own
+  /// button. Never throws.
+  static Future<void> _startFromFile(FutureOr<Dio> Function() dio) async {
+    if (ZiRuntime.instance != null) return;
+    try {
+      WidgetsFlutterBinding.ensureInitialized();
+      final file = await ZiAppFile.load(rootBundle);
+      final package = await PackageInfo.fromPlatform();
+      final platform = Platform.isIOS ? 'ios' : (Platform.isAndroid ? 'android' : Platform.operatingSystem);
+      final key = file.keyFor(release: kReleaseMode, platform: platform, runningId: package.packageName);
+      final client = await dio();
+      final build = package.buildNumber.isEmpty ? '' : '+${package.buildNumber}';
+      ZiRuntime.instance = await ZiRuntime.create(
+        config: ZiInitConfig(appKey: key, consoleUrl: file.consoleUrl),
+        info: ZiClientInfo(
+          appKey: key,
+          packageName: package.packageName,
+          appVersion: '${package.version}$build',
+          sdkVersion: zehnIntelligenceVersion,
+          platform: platform,
+        ),
+        client: client,
+        openRoute: openAppRoute,
+        handlers: registeredTools,
+        builders: registeredComponents,
+      );
+      ZiAssistantOverlay.install();
+      debugPrint(
+        'zehn_intelligence: started on the ${kReleaseMode ? 'production' : 'test'} track, '
+        '$platform app ${package.packageName}, server ${file.consoleUrl}',
+      );
+    } on Object catch (e) {
+      debugPrint('zehn_intelligence: the assistant is off: $e');
+    }
+  }
+
   /// The console config file, if the app bundles one; only for fallbacks.
   static Future<Map<String, Object?>?> _readConfigFile(String configPath) async {
     Map<String, dynamic>? config;
@@ -337,10 +376,26 @@ class ZehnIntelligence {
   /// The intelligence is also [instance], so `AgentButton` and `AgentChatSheet`
   /// work without an `AgentScope`.
   ///
-  /// Deprecated: this runs the model on the phone against `api.zehnmind.com`,
-  /// which the console backend no longer allows.
-  @Deprecated('Use ZehnIntelligence.init')
-  static Future<ZehnIntelligence> start({
+  /// Without [dio] this is deprecated: it runs the model on the phone against
+  /// `api.zehnmind.com`, which the console backend no longer allows.
+  ///
+  /// **With [dio]** it is the one line the console gives an app, placed
+  /// before `runApp(` (the setup command adds it):
+  ///
+  /// ```dart
+  /// await ZehnIntelligence.start(dio: () => di<Dio>());
+  /// ```
+  ///
+  /// It reads the console's file `assets/zehn-intelligence.json` (format 3:
+  /// the test key in debug and profile builds, the production key in release
+  /// builds), sends the server's requests through the app's own Dio, opens
+  /// screens like a deep link and draws its own floating button: no
+  /// [ZehnAiButton], no `openRoute` and no other code of the app's. It never
+  /// throws: when the assistant can't start (no file, another app's file, no
+  /// key, the Dio not ready) it logs why and the app runs on without it. It
+  /// returns null.
+  static Future<ZehnIntelligence?> start({
+    FutureOr<Dio> Function()? dio,
     String? appName,
     AgentProfile? profile,
     String apiKey = '',
@@ -365,6 +420,10 @@ class ZehnIntelligence {
     String textExample = 'Your order will arrive tomorrow.',
     AgentLog? log,
   }) async {
+    if (dio != null) {
+      await _startFromFile(dio);
+      return null;
+    }
     assert(
       appName != null || profile != null,
       'ZehnIntelligence.start needs an appName or a profile',
