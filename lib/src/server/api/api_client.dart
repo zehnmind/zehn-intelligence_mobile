@@ -97,12 +97,18 @@ class ZiApiClient {
 
   /// Opens an event stream. Throws [ZiApiException] when the answer is an
   /// error or not `text/event-stream`.
-  Future<ResponseBody> postStream(String path, Object body, {required String userToken}) async {
+  Future<ResponseBody> postStream(
+    String path,
+    Object body, {
+    required String userToken,
+    CancelToken? cancelToken,
+  }) async {
     final Response<ResponseBody> response;
     try {
       response = await _dio.request<ResponseBody>(
         '$_base$path',
         data: jsonEncode(body),
+        cancelToken: cancelToken,
         options: Options(
           method: 'POST',
           headers: {

@@ -20,7 +20,9 @@ Stream<SseFrame> parseSse(Stream<List<int>> bytes) async* {
   final data = <String>[];
   var comment = false;
 
-  await for (final line in bytes.transform(utf8.decoder).transform(const LineSplitter())) {
+  // bind, not transform: Dio hands a Stream<Uint8List>, which transform
+  // would require a Uint8List transformer for.
+  await for (final line in const LineSplitter().bind(utf8.decoder.bind(bytes))) {
     if (line.isEmpty) {
       if (data.isNotEmpty || event != null) {
         yield SseFrame(event: event ?? 'message', data: data.join('\n'), id: id);

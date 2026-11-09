@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/sse.dart';
@@ -37,6 +38,11 @@ void main() {
   test('frame without event is message', () async {
     final frames = await parse(['data: hi\n\n']);
     expect(frames.single.event, 'message');
+  });
+
+  test('accepts a Uint8List stream, as Dio gives', () async {
+    final frames = await parseSse(Stream<Uint8List>.fromIterable([utf8.encode('event: done\ndata: {}\n\n')])).toList();
+    expect(frames.single.event, 'done');
   });
 
   test('a UTF-8 character split across chunks survives', () async {
