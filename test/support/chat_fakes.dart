@@ -6,6 +6,7 @@ import 'package:zehn_intelligence/src/server/api/api_client.dart';
 import 'package:zehn_intelligence/src/server/api/turn_client.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/auth/file_store.dart';
+import 'package:zehn_intelligence/src/server/bootstrap/bootstrap.dart';
 import 'package:zehn_intelligence/src/server/bootstrap/bootstrap_repository.dart';
 import 'package:zehn_intelligence/src/server/chat/audio_queue.dart';
 import 'package:zehn_intelligence/src/server/proxy/proxy_executor.dart';
@@ -70,3 +71,20 @@ class FakeAudio implements ZiAudioQueue {
 
 TurnFailed failure(String code, {bool retryable = false}) =>
     TurnFailed(ZiApiException(code, retryable: retryable), turnId: 't1');
+
+/// Start-up data that is simply there: no file, no network.
+class FixedBootstrap extends ZiBootstrapRepository {
+  FixedBootstrap(this.data) : super(api: _unused, store: ZiFileStore(() async => Directory.systemTemp));
+
+  ZiBootstrap? data;
+  int refreshes = 0;
+
+  @override
+  ZiBootstrap? get current => data;
+
+  @override
+  Future<ZiBootstrap?> refresh() async {
+    refreshes++;
+    return data;
+  }
+}

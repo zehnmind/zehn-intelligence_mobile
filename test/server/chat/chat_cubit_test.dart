@@ -204,4 +204,10 @@ void main() {
     expect(cubit.state.conversationId, isNull);
     expect(audio.stops, greaterThanOrEqualTo(1));
   });
+
+  test('showError adds a local error item', () {
+    cubit.showError('payload_too_large');
+    expect(cubit.state.items.single, const ZiErrorItem('payload_too_large'));
+    expect(cubit.state.busy, isFalse);
+  });
 }

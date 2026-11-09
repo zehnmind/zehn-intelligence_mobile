@@ -11,10 +11,32 @@ import '../core/log.dart';
 /// Owned by the chat and disposed with it; nothing records while the chat is
 /// closed.
 class AgentVoiceRecorder {
-  AgentVoiceRecorder({this.log = silentAgentLog}) : _recorder = AudioRecorder();
+  /// [aac] records AAC in `.m4a` at 64 kbit/s instead: what the console's
+  /// turn flow takes (about a minute fits its 1 MiB limit).
+  AgentVoiceRecorder({this.log = silentAgentLog, this.aac = false}) : _recorder = AudioRecorder();
 
   final AudioRecorder _recorder;
   final AgentLog log;
+  final bool aac;
+
+  // The default iOS options include defaultToSpeaker, which is what keeps
+  // the spoken reply on the loudspeaker afterwards instead of the earpiece.
+  static RecordConfig configFor({required bool aac}) => aac
+      ? const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 64000,
+          sampleRate: 44100,
+          numChannels: 1,
+          noiseSuppress: true,
+        )
+      : const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+          noiseSuppress: true,
+        );
+
+  static String extensionFor({required bool aac}) => aac ? 'm4a' : 'wav';
 
   /// The level meter's range, from Evonote's recorder: quieter than [_floorDb]
   /// reads as silence, louder than [_ceilingDb] as full scale. Normal speech
@@ -30,19 +52,9 @@ class AgentVoiceRecorder {
 
       final dir = await getTemporaryDirectory();
       final path =
-          '${dir.path}/agent_voice_${DateTime.now().millisecondsSinceEpoch}.wav';
+          '${dir.path}/agent_voice_${DateTime.now().millisecondsSinceEpoch}.${extensionFor(aac: aac)}';
 
-      // The default iOS options include defaultToSpeaker, which is what keeps
-      // the spoken reply on the loudspeaker afterwards instead of the earpiece.
-      await _recorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          sampleRate: 16000,
-          numChannels: 1,
-          noiseSuppress: true,
-        ),
-        path: path,
-      );
+      await _recorder.start(configFor(aac: aac), path: path);
       return true;
     } catch (e) {
       log('agent voice: could not start recording: $e');

@@ -95,6 +95,11 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     }
   }
 
+  /// Shows an error the SDK found itself, before anything was sent (a
+  /// recording over 1 MiB).
+  void showError(String code, {bool retryable = false}) =>
+      _emit(state.copyWith(items: [...state.items, ZiErrorItem(code, retryable: retryable)]));
+
   /// Forgets the conversation (sign-out, "new chat").
   void reset() {
     _hangUp();
