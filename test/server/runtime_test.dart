@@ -99,7 +99,7 @@ void main() {
       await (await create()).loadConfig();
       await (await create()).loadConfig();
       final ids = {for (final r in server.requests) r.headers['x-zi-install-id']};
-      expect(ids.single, matches(RegExp(r'^[0-9a-f]{32}$')));
+      expect(ids.single, matches(RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')));
       expect(server.requests.any((r) => r.headers.containsKey('x-zi-spec-version')), isFalse);
       expect(server.requests.any((r) => r.path == '/v1/installs'), isFalse);
     });

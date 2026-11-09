@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/api_client.dart';
@@ -16,22 +17,38 @@ void main() {
 
   tearDown(() => dir.delete(recursive: true));
 
-  test('the install id is made once and kept', () async {
+  // What the server accepts in X-ZI-Install-Id: a lower-case UUID v4 with hyphens.
+  final uuidV4 = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');
+
+  test('the install id is a lower-case UUID v4, made once and kept', () async {
     final id = await loadInstallId(store);
-    expect(id, matches(RegExp(r'^[0-9a-f]{32}$')));
+    expect(id, matches(uuidV4));
     expect(await loadInstallId(store), id);
     expect(await loadInstallId(ZiFileStore(() async => dir)), id);
   });
 
-  test('an install id saved by an older SDK is kept', () async {
-    await store.write('install', {'install_id': 'ffffffffffffffffffffffffffffffff', 'token': 'old'});
-    expect(await loadInstallId(store), 'ffffffffffffffffffffffffffffffff');
+  test('a new id is a UUID v4 every time', () {
+    final random = Random(7);
+    for (var i = 0; i < 100; i++) {
+      expect(newInstallId(random), matches(uuidV4));
+    }
+  });
+
+  test('an id an older build kept without hyphens keeps its value, with hyphens', () async {
+    await store.write('install', {'install_id': '0123456789abcdef0123456789abcdef', 'token': 'old'});
+    expect(await loadInstallId(store), '01234567-89ab-cdef-0123-456789abcdef');
+    expect(await store.read('install'), {'install_id': '01234567-89ab-cdef-0123-456789abcdef'});
+  });
+
+  test('a kept UUID is used as it is', () async {
+    await store.write('install', {'install_id': 'ffffffff-ffff-4fff-bfff-ffffffffffff'});
+    expect(await loadInstallId(store), 'ffffffff-ffff-4fff-bfff-ffffffffffff');
   });
 
   test('a broken saved id is replaced', () async {
     await File('${dir.path}/install.json').writeAsString('{oops');
     final id = await loadInstallId(store);
-    expect(id, matches(RegExp(r'^[0-9a-f]{32}$')));
+    expect(id, matches(uuidV4));
     expect(await loadInstallId(store), id);
   });
 

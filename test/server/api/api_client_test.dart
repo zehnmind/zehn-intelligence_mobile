@@ -28,14 +28,14 @@ void main() {
 
   test('sends every X-ZI header', () async {
     server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 200, {'suggestions': []}));
-    api.installId = '0123456789abcdef0123456789abcdef';
+    api.installId = '01234567-89ab-4def-8123-456789abcdef';
     await api.getJson('/v1/suggestions', userToken: 't');
     final h = server.requests.single.headers;
     expect(h['authorization'], 'Bearer t');
     expect(h['x-zi-app-key'], 'zi_test_abc');
     expect(h['x-zi-package'], 'uz.example.app');
     expect(h['x-zi-app-version'], '1.2.0+5');
-    expect(h['x-zi-install-id'], '0123456789abcdef0123456789abcdef');
+    expect(h['x-zi-install-id'], '01234567-89ab-4def-8123-456789abcdef');
     expect(h['x-zi-sdk-version'], '0.4.0');
     // With it the server treats the build as one that pins a spec.
     expect(h.containsKey('x-zi-spec-version'), isFalse);

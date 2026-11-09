@@ -48,14 +48,29 @@ class AnonymousTokenSource implements ZiTokenSource {
   Future<String?> refresh() async => null;
 }
 
-/// This install's id: 32 hex characters, made once and kept in the SDK's
-/// support folder. Sent as `X-ZI-Install-Id` on every console call.
+/// This install's id: a random UUID (version 4) in lower case, with hyphens,
+/// made once and kept in the SDK's support folder. Sent as `X-ZI-Install-Id`
+/// on every console call; the server refuses any other form
+/// (`400 invalid_header`).
 Future<String> loadInstallId(ZiFileStore store) async {
   const file = 'install';
-  final id = (await store.read(file))?['install_id'];
-  if (id is String && RegExp(r'^[0-9a-f]{32}$').hasMatch(id)) return id;
-  final random = Random.secure();
-  final fresh = List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
-  await store.write(file, {'install_id': fresh});
-  return fresh;
+  final kept = (await store.read(file))?['install_id'];
+  if (kept is String && _uuid.hasMatch(kept)) return kept;
+  // An id an earlier build kept as 32 hex characters: the same id, with hyphens.
+  final id = kept is String && RegExp(r'^[0-9a-f]{32}$').hasMatch(kept) ? _hyphenated(kept) : newInstallId(Random.secure());
+  await store.write(file, {'install_id': id});
+  return id;
+}
+
+final _uuid = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
+
+String _hyphenated(String hex) =>
+    '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
+
+/// A random UUID, version 4, in lower case.
+String newInstallId(Random random) {
+  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // the RFC 4122 variant
+  return _hyphenated(bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join());
 }
