@@ -56,15 +56,19 @@ class ZiChatSheet extends StatefulWidget {
     isScrollControlled: true,
     useSafeArea: true,
     showDragHandle: true,
-    builder: (_) => FractionallySizedBox(
-      heightFactor: 0.9,
-      child: ZiChatSheet(
-        cubit: cubit,
-        bootstrap: bootstrap,
-        language: language,
-        builders: builders,
-        openRoute: openRoute,
-        title: title,
+    // The padding lifts the whole sheet, composer included, above the keyboard.
+    builder: (sheetContext) => Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheetContext).bottom),
+      child: FractionallySizedBox(
+        heightFactor: 0.9,
+        child: ZiChatSheet(
+          cubit: cubit,
+          bootstrap: bootstrap,
+          language: language,
+          builders: builders,
+          openRoute: openRoute,
+          title: title,
+        ),
       ),
     ),
   );

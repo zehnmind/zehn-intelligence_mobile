@@ -94,9 +94,13 @@ class ZiRuntime {
   final Map<String, ZiComponentBuilder> builders;
   ZiTokenSource _tokens;
   String? _language;
+  late final ZiToolRunner _tools;
 
   @visibleForTesting
   ZiTokenSource get tokens => _tokens;
+
+  @visibleForTesting
+  ZiToolRunner get tools => _tools;
 
   static Future<ZiRuntime> create({
     required ZiInitConfig config,
@@ -105,6 +109,7 @@ class ZiRuntime {
     FutureOr<String?> Function()? accessToken,
     FutureOr<bool> Function()? onUnauthorized,
     Uri? apiBaseUrl,
+    FutureOr<bool> Function()? isSignedIn,
     FutureOr<String?> Function()? userToken,
     FutureOr<void> Function(String route)? openRoute,
     Map<String, ZiToolHandler> handlers = const {},
@@ -121,8 +126,13 @@ class ZiRuntime {
       debugPrint('zehn_intelligence: both client and accessToken/onUnauthorized were given; the client is used');
     }
     final proxy = client != null
-        ? ZiProxyExecutor(appClient: client)
-        : ZiProxyExecutor(accessToken: accessToken, onUnauthorized: onUnauthorized, baseUrlOverride: apiBaseUrl);
+        ? ZiProxyExecutor(appClient: client, isSignedIn: isSignedIn)
+        : ZiProxyExecutor(
+            accessToken: accessToken,
+            onUnauthorized: onUnauthorized,
+            baseUrlOverride: apiBaseUrl,
+            isSignedIn: isSignedIn,
+          );
 
     final runtime = ZiRuntime._(
       api: api,
@@ -134,7 +144,7 @@ class ZiRuntime {
       builders: builders,
     );
     final turns = ZiTurnClient(api: api, tokens: () => runtime._tokens);
-    final tools = ZiToolRunner(
+    final tools = runtime._tools = ZiToolRunner(
       handlers: handlers,
       proxy: proxy,
       bootstrap: bootstrap,

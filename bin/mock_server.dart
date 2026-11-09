@@ -16,9 +16,22 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+/// `--bootstrap <file.json>` serves that start-up data instead of the
+/// built-in one, e.g. a real app's endpoints for trying it against its API.
+Map<String, Object?>? _bootstrapFile;
+
 Future<void> main(List<String> args) async {
-  final i = args.indexOf('--port');
-  final port = i >= 0 && i + 1 < args.length ? int.parse(args[i + 1]) : 8787;
+  String? arg(String name) {
+    final i = args.indexOf(name);
+    return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
+  }
+
+  final port = int.parse(arg('--port') ?? '8787');
+  final file = arg('--bootstrap');
+  if (file != null) {
+    _bootstrapFile = (jsonDecode(File(file).readAsStringSync()) as Map).cast<String, Object?>();
+    stdout.writeln('start-up data from $file');
+  }
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
   stdout.writeln('mock server on http://localhost:$port');
   await for (final req in server) {
@@ -32,9 +45,10 @@ final _turns = <String, _PendingTurn>{};
 var _nextTurn = 0;
 
 class _PendingTurn {
-  _PendingTurn(this.language);
+  _PendingTurn(this.language, this.tool);
 
   final String language;
+  final String tool;
 }
 
 Future<void> _handle(HttpRequest req, int port) async {
@@ -44,7 +58,7 @@ Future<void> _handle(HttpRequest req, int port) async {
   var status = 200;
   try {
     if (req.method == 'GET' && path == '/v1/bootstrap') {
-      await _json(req, 200, _bootstrap(port));
+      await _json(req, 200, _bootstrapFile ?? _bootstrap(port));
     } else if (req.method == 'POST' && path == '/v1/installs') {
       await _json(req, 200, {'token': 'install-token', 'token_type': 'Bearer', 'expires_in': 3600});
     } else if (req.method == 'GET' && path == '/v1/suggestions') {
@@ -142,7 +156,7 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
     ]);
     return;
   }
-  _turns[turnId] = _PendingTurn(language);
+  _turns[turnId] = _PendingTurn(language, tool);
   await _sse(req, turnId, [
     started,
     ...transcript,
@@ -175,17 +189,20 @@ Future<void> _results(HttpRequest req, String turnId, Map<String, Object?> body)
     return;
   }
   final data = first['data'];
-  if (data is Map && data.containsKey('current_points')) {
+  if (pending?.tool == 'loyalty_cards.get') {
+    final points = data is Map ? data['current_points'] : null;
     await _sse(req, turnId, [
       (
         'text.delta',
         {
-          'text': _w(
-            language,
-            'Kartangizda **${data['current_points']}** ball bor (${data['tier']}).',
-            'На вашей карте **${data['current_points']}** баллов (${data['tier']}).',
-            'Your card has **${data['current_points']}** points (${data['tier']}).',
-          ),
+          'text': points == null
+              ? _w(language, 'Kartangiz ma’lumoti olindi.', 'Данные карты получены.', 'I got your card details.')
+              : _w(
+                  language,
+                  'Kartangizda **$points** ball bor.',
+                  'На вашей карте **$points** баллов.',
+                  'Your card has **$points** points.',
+                ),
         },
       ),
       ('done', {'outcome': 'answered'}),

@@ -202,8 +202,10 @@ class ZehnIntelligence {
   /// `https://zi-console-api.zehnmind.com`). Tools run as requests to the
   /// app's own API, built from what the console publishes: through the app's
   /// [client] (its base URL, auth and refresh), or with [accessToken],
-  /// [onUnauthorized] and the console's (or [apiBaseUrl]'s) base URL. Pages
-  /// open through [openRoute]. [userToken] is a Zehn user token from the
+  /// [onUnauthorized] and the console's (or [apiBaseUrl]'s) base URL.
+  /// [isSignedIn] keeps login-only tools from being called for a signed-out
+  /// user (pass it with [client]: the app's own 401 handling may sign the
+  /// user out). Pages open through [openRoute]. [userToken] is a Zehn user token from the
   /// app's backend; without one an anonymous token per install is used.
   ///
   /// [token] falls back to the config file at [configPath] and then to
@@ -217,6 +219,7 @@ class ZehnIntelligence {
     FutureOr<String?> Function()? accessToken,
     FutureOr<bool> Function()? onUnauthorized,
     Uri? apiBaseUrl,
+    FutureOr<bool> Function()? isSignedIn,
     FutureOr<String?> Function()? userToken,
     FutureOr<void> Function(String route)? openRoute,
     String? appName,
@@ -251,6 +254,7 @@ class ZehnIntelligence {
       accessToken: accessToken,
       onUnauthorized: onUnauthorized,
       apiBaseUrl: apiBaseUrl,
+      isSignedIn: isSignedIn,
       userToken: userToken,
       openRoute: openRoute,
       handlers: registeredTools,

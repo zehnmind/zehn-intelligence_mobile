@@ -211,4 +211,14 @@ void main() {
     expect(find.byType(ZiChatSheet), findsNothing);
     expect(find.text('page b'), findsOneWidget);
   });
+
+  testWidgets('the composer stays above the keyboard', (tester) async {
+    await open(tester);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpAndSettle();
+    final screenHeight = tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    final keyboardTop = screenHeight - 900 / tester.view.devicePixelRatio;
+    expect(tester.getBottomLeft(find.byType(TextField)).dy, lessThanOrEqualTo(keyboardTop));
+  });
 }

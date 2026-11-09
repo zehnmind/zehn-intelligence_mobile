@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/auth/file_store.dart';
 import 'package:zehn_intelligence/src/server/auth/token_source.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
@@ -112,6 +113,25 @@ void main() {
       await runtime.clearUser();
       expect(runtime.chat.state, const ZiChatState());
       expect(runtime.tokens, isA<InstallTokenSource>());
+    });
+
+    test('isSignedIn false keeps login-only tools from being called', () async {
+      server.on('GET', '/v1/bootstrap', (req, _) => respondJson(req, 500, {}));
+      final json = bootstrapJson(baseUrl: server.url.toString());
+      (json['tools']! as Map)['loyalty_cards.get'] = {'method': 'GET', 'path': '/loyalty/cards/my', 'auth': true};
+      await store.write('bootstrap', json);
+      final runtime = await ZiRuntime.create(
+        config: ZiInitConfig(appKey: 'zi_test_abc', consoleUrl: server.url),
+        info: info,
+        accessToken: () => 't',
+        isSignedIn: () => false,
+        store: store,
+      );
+      final results = await runtime.tools.runAll([
+        const ClientApiRequest(callId: 'c1', tool: 'loyalty_cards.get', args: {}),
+      ]);
+      expect(results.single.errorCode, 'not_signed_in');
+      expect(server.requests.where((r) => r.path == '/loyalty/cards/my'), isEmpty);
     });
   });
 }

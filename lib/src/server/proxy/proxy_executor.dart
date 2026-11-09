@@ -19,18 +19,21 @@ class ZiProxyExecutor {
     FutureOr<String?> Function()? accessToken,
     FutureOr<bool> Function()? onUnauthorized,
     Uri? baseUrlOverride,
+    FutureOr<bool> Function()? isSignedIn,
     Dio? ownClient,
     this.timeout = const Duration(seconds: 20),
   }) : _appClient = appClient,
        _accessToken = accessToken,
        _onUnauthorized = onUnauthorized,
        _baseUrlOverride = baseUrlOverride,
+       _isSignedIn = isSignedIn,
        _own = ownClient ?? Dio();
 
   final Dio? _appClient;
   final FutureOr<String?> Function()? _accessToken;
   final FutureOr<bool> Function()? _onUnauthorized;
   final Uri? _baseUrlOverride;
+  final FutureOr<bool> Function()? _isSignedIn;
   final Dio _own;
   final Duration timeout;
 
@@ -41,6 +44,13 @@ class ZiProxyExecutor {
   /// The trimmed JSON answer. Throws [ZiToolError] the model can read.
   Future<Object?> call(ZiHttpTool tool, Map<String, Object?> args, ZiBootstrap boot, ZiRequestContext ctx) async {
     final request = buildRequest(tool, args, boot.api, ctx);
+    // A login-only call for a signed-out user is never made: through the
+    // app's own client it could set off the app's sign-out (as TCM's
+    // refresh interceptor does on a 401 it cannot refresh).
+    final signedIn = _isSignedIn;
+    if (tool.auth && signedIn != null && !await signedIn()) {
+      throw const ZiToolError('not_signed_in', 'Ask the user to sign in.');
+    }
     final app = _appClient;
     final Response<Object?> response;
     if (app != null) {

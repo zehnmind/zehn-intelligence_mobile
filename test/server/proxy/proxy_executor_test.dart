@@ -168,4 +168,24 @@ void main() {
   test('track is parsed', () {
     expect(ZiBootstrap.fromJson({...bootstrapJson(), 'track': 'test'}).track, 'test');
   });
+
+  test('an auth tool is not called when isSignedIn is false, even through the app client', () async {
+    server.on('GET', '/loyalty/cards/my', (req, _) => respondJson(req, 401, {}));
+    final app = Dio(BaseOptions(baseUrl: server.url.toString()));
+    final proxy = ZiProxyExecutor(appClient: app, isSignedIn: () => false);
+    await expectLater(proxy.call(card, {}, boot, ctx), toolError('not_signed_in'));
+    expect(server.requests, isEmpty);
+  });
+
+  test('isSignedIn true lets an auth tool through', () async {
+    server.on('GET', '/loyalty/cards/my', (req, _) => respondJson(req, 200, {'points': 3}));
+    final app = Dio(BaseOptions(baseUrl: server.url.toString()));
+    final proxy = ZiProxyExecutor(appClient: app, isSignedIn: () async => true);
+    expect(await proxy.call(card, {}, boot, ctx), {'points': 3});
+  });
+
+  test('isSignedIn does not block public tools', () async {
+    final proxy = ZiProxyExecutor(isSignedIn: () => false);
+    expect(await proxy.call(cinema, {}, boot, ctx), {'id': 1, 'name': 'Cinematica'});
+  });
 }
