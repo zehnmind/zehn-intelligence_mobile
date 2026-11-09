@@ -2,18 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/api_client.dart';
-import 'package:zehn_intelligence/src/server/api/client_info.dart';
-import 'package:zehn_intelligence/src/version.dart';
 
 import '../../support/fake_server.dart';
-
-const info = ZiClientInfo(
-  appKey: 'zi_test_abc',
-  packageName: 'uz.example.app',
-  appVersion: '1.2.0+5',
-  sdkVersion: zehnIntelligenceVersion,
-  platform: 'ios',
-);
+import '../../support/test_info.dart';
 
 void main() {
   late FakeServer server;
