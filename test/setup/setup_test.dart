@@ -359,6 +359,12 @@ Future<void> main() async {
     expect(out.toString(), contains('✗ The console refused the code: expired'));
   });
 
+  test('without --server the code goes to the console, which serves /api (the SDK host serves only /v1)', () async {
+    final (code, out) = await run(['K7Q2-9XMD']);
+    expect(code, 0, reason: out);
+    expect(codes, ['https://zi-console.zehnmind.com K7Q2-9XMD']);
+  });
+
   test('the options the button needed are gone', () async {
     for (final option in ['--button', '--no-button', '--no-dio']) {
       final (code, out) = await run(['K7Q2-9XMD', option]);

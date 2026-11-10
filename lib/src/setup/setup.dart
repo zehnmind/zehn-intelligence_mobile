@@ -34,7 +34,10 @@ import 'main_edit.dart';
 import 'project_files.dart';
 import 'undo.dart';
 
-const defaultServer = 'https://zi-console-api.zehnmind.com';
+/// The console, whose nginx serves the console API (`/api`). Not the SDK's
+/// host (`zi_console_url`, `zi-console-api.zehnmind.com`): that one publishes
+/// only `/v1` and `/health`.
+const defaultServer = 'https://zi-console.zehnmind.com';
 
 const usage = '''
 Adds Zehn Intelligence to this Flutter app: the app's file and one line in main().
@@ -44,7 +47,7 @@ Run it in the app's folder, after `flutter pub add zehn_intelligence`.
 
 <code> is the one-time code from the console's Integration tab.
 
-  --server <url>     the console API (default $defaultServer)
+  --server <url>     the console (default $defaultServer)
   --file <path>      use a downloaded zehn-intelligence.json instead of a code
   --dio <expr>       the app's Dio, as main() can reach it (e.g. "getIt<Dio>()")
   --dry-run          show what would change, write nothing
