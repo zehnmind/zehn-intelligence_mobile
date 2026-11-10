@@ -27,6 +27,14 @@ void main() {
     expect(await loadInstallId(ZiFileStore(() async => dir)), id);
   });
 
+  test('renewing the install id replaces the kept one', () async {
+    final old = await loadInstallId(store);
+    final fresh = await renewInstallId(store);
+    expect(fresh, matches(uuidV4));
+    expect(fresh, isNot(old));
+    expect(await loadInstallId(store), fresh);
+  });
+
   test('a new id is a UUID v4 every time', () {
     final random = Random(7);
     for (var i = 0; i < 100; i++) {

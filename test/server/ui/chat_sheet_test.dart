@@ -6,12 +6,16 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
+import 'package:zehn_intelligence/src/server/api/api_client.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_settings.dart';
+import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
+import 'package:zehn_intelligence/src/server/chat/history.dart';
 import 'package:zehn_intelligence/src/server/ui/chat_sheet.dart';
 import 'package:zehn_intelligence/src/server/ui/voice.dart';
 import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiComponentController;
 
 import '../../support/chat_fakes.dart';
+import '../../support/history_fakes.dart';
 
 typedef ComponentBuilder = Widget Function(BuildContext, Map<String, Object?>, ZiComponentController);
 
@@ -102,7 +106,7 @@ void main() {
 
   tearDown(() => cubit.close());
 
-  Widget sheetLauncher(ValueListenable<ZiChatSettings> settings, Map<String, ComponentBuilder> builders) => Builder(
+  Widget sheetLauncher(ValueListenable<ZiChatSettings> settings, Map<String, ComponentBuilder> builders, ZiHistory? history) => Builder(
     builder: (context) => TextButton(
       onPressed: () => ZiChatSheet.show(
         context,
@@ -112,6 +116,7 @@ void main() {
         builders: builders,
         openRoute: routes.add,
         recorderFactory: () => recorder,
+        history: history,
       ),
       child: const Text('open'),
     ),
@@ -121,11 +126,12 @@ void main() {
     WidgetTester tester, {
     ZiChatSettings settings = voice,
     Map<String, ComponentBuilder> builders = const {},
+    ZiHistory? history,
   }) async {
     phone(tester);
     final notifier = ValueNotifier(settings);
     addTearDown(notifier.dispose);
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Center(child: sheetLauncher(notifier, builders)))));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Center(child: sheetLauncher(notifier, builders, history)))));
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
     return notifier;
@@ -280,7 +286,7 @@ void main() {
         builder: (context) => Scaffold(
           body: TextButton(
             onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (context) => Scaffold(body: Column(children: [const Text('page b'), sheetLauncher(settings, const {})])),
+              builder: (context) => Scaffold(body: Column(children: [const Text('page b'), sheetLauncher(settings, const {}, null)])),
             )),
             child: const Text('next'),
           ),
@@ -449,5 +455,103 @@ void main() {
     expect(sheet.bottom, 874);
     // The composer area keeps clear of the home indicator.
     expect(tester.getBottomLeft(find.text('Type a message')).dy, lessThanOrEqualTo(874 - 34));
+  });
+  group('history', () {
+    late FakeHistory history;
+
+    setUp(() => history = FakeHistory());
+
+    Future<void> openHistory(WidgetTester tester) async {
+      await open(tester, history: history);
+      await tester.tap(find.byKey(const ValueKey('zi-history')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('without a history the landing has no history button', (tester) async {
+      await open(tester);
+      expect(find.byKey(const ValueKey('zi-history')), findsNothing);
+    });
+
+    testWidgets('the history button lists the conversations, latest first, with their times', (tester) async {
+      history.saved = [summary('c1', title: 'Where is the cinema?'), summary('c2', title: 'Parking for 2 hours')];
+      await openHistory(tester);
+      expect(find.text('Chat history'), findsOneWidget);
+      expect(tester.getTopLeft(find.text('Where is the cinema?')).dy,
+          lessThan(tester.getTopLeft(find.text('Parking for 2 hours')).dy));
+      expect(find.text('09:14, 06.11.2026'), findsNWidgets(2));
+      expect(find.text('How can I help you?'), findsNothing);
+    });
+
+    testWidgets('a conversation opens as it was, from when it started, and the next question goes on in it', (tester) async {
+      history.saved = [summary('c1', title: 'Where is the cinema?')];
+      await openHistory(tester);
+      await tester.tap(find.text('Where is the cinema?'));
+      await tester.pumpAndSettle();
+      expect(find.text('Where is the cinema?'), findsOneWidget);
+      expect(find.byType(MarkdownBody), findsOneWidget);
+      expect(find.text('Chat'), findsOneWidget);
+      expect(find.text('09:12, 06.11.2026'), findsOneWidget);
+      turns.script([const TurnStarted(conversationId: 'c1', conversationNew: false, turnId: 't2'), const TextDelta(text: 'Yes'), done]);
+      await type(tester, 'Is it open now?');
+      expect(turns.starts.single.conversationId, 'c1');
+    });
+
+    testWidgets("one that can't go on is read-only: a note and New chat instead of the input", (tester) async {
+      history.saved = [summary('c1', title: 'Where is the cinema?', canContinue: false)];
+      await openHistory(tester);
+      await tester.tap(find.text('Where is the cinema?'));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('This chat can’t be continued.'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('zi-new-chat')));
+      await tester.pumpAndSettle();
+      expect(find.text('How can I help you?'), findsOneWidget);
+      expect(cubit.state, isNot(predicate<ZiChatState>((s) => s.readOnly)));
+    });
+
+    testWidgets('back from the history is the landing', (tester) async {
+      await openHistory(tester);
+      await tester.tap(find.byKey(const ValueKey('zi-back')));
+      await tester.pumpAndSettle();
+      expect(find.text('How can I help you?'), findsOneWidget);
+      expect(find.text('Chat history'), findsNothing);
+    });
+
+    testWidgets('an empty history says so', (tester) async {
+      await openHistory(tester);
+      expect(find.text('No chats yet'), findsOneWidget);
+    });
+
+    testWidgets('a list that fails offers a retry', (tester) async {
+      history.failWith = const ZiApiException('network_error', retryable: true);
+      await openHistory(tester);
+      expect(find.text('No connection. Please try again.'), findsOneWidget);
+      history
+        ..failWith = null
+        ..saved = [summary('c1', title: 'Where is the cinema?')];
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.text('Where is the cinema?'), findsOneWidget);
+    });
+
+    testWidgets('swiping a conversation away deletes it', (tester) async {
+      history.saved = [summary('c1', title: 'Where is the cinema?'), summary('c2', title: 'Parking for 2 hours')];
+      await openHistory(tester);
+      await tester.drag(find.text('Where is the cinema?'), const Offset(-400, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('Where is the cinema?'), findsNothing);
+      expect(history.saved.map((s) => s.id), ['c2']);
+    });
+
+    testWidgets('a delete the server refuses keeps the row and says so', (tester) async {
+      history
+        ..saved = [summary('c1', title: 'Where is the cinema?')]
+        ..deleteFails = const ZiApiException('turn_in_progress');
+      await openHistory(tester);
+      await tester.drag(find.text('Where is the cinema?'), const Offset(-400, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('Where is the cinema?'), findsOneWidget);
+      expect(find.text('Something went wrong.'), findsOneWidget);
+    });
   });
 }

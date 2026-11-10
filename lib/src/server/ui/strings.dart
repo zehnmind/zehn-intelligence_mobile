@@ -35,6 +35,10 @@ class ZiStrings {
   String get confirmed => _w['confirmed']!;
   String get cancelled => _w['cancelled']!;
   String get expired => _w['expired']!;
+  String get history => _w['history']!;
+  String get historyEmpty => _w['historyEmpty']!;
+  String get delete => _w['delete']!;
+  String get chatEnded => _w['chatEnded']!;
 
   /// Not translated: the brand line under the title.
   String get poweredBy => 'Powered by zehnmind.ai';
@@ -52,6 +56,10 @@ class ZiStrings {
   }]!;
 
   static const _uz = {
+    'history': 'Suhbatlar tarixi',
+    'historyEmpty': 'Hali suhbatlar yo‘q',
+    'delete': 'O‘chirish',
+    'chatEnded': 'Bu suhbatni davom ettirib bo‘lmaydi.',
     'confirm': 'Tasdiqlash',
     'decline': 'Bekor qilish',
     'confirmDefault': 'Tasdiqlaysizmi?',
@@ -88,6 +96,10 @@ class ZiStrings {
   };
 
   static const _ru = {
+    'history': 'История чатов',
+    'historyEmpty': 'Пока нет чатов',
+    'delete': 'Удалить',
+    'chatEnded': 'Этот чат нельзя продолжить.',
     'confirm': 'Подтвердить',
     'decline': 'Отмена',
     'confirmDefault': 'Подтвердить?',
@@ -124,6 +136,10 @@ class ZiStrings {
   };
 
   static const _en = {
+    'history': 'Chat history',
+    'historyEmpty': 'No chats yet',
+    'delete': 'Delete',
+    'chatEnded': 'This chat can’t be continued.',
     'confirm': 'Confirm',
     'decline': 'Cancel',
     'confirmDefault': 'Confirm this?',

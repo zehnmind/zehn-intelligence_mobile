@@ -98,7 +98,8 @@ class ZiCircleButton extends StatelessWidget {
   }
 }
 
-/// Close or back on the left, a title and a subtitle.
+/// Close or back on the left, a title and a subtitle, and on the landing
+/// the history button on the right.
 class ZiHeaderBar extends StatelessWidget {
   const ZiHeaderBar({
     super.key,
@@ -109,6 +110,10 @@ class ZiHeaderBar extends StatelessWidget {
     required this.leadingKey,
     required this.leadingLabel,
     required this.onLeading,
+    this.trailingIcon,
+    this.trailingKey,
+    this.trailingLabel,
+    this.onTrailing,
   });
 
   final ZiChatStyle style;
@@ -120,6 +125,12 @@ class ZiHeaderBar extends StatelessWidget {
   final Key leadingKey;
   final String leadingLabel;
   final VoidCallback onLeading;
+
+  /// `chat_history`; without it the title keeps the same place.
+  final String? trailingIcon;
+  final Key? trailingKey;
+  final String? trailingLabel;
+  final VoidCallback? onTrailing;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -146,8 +157,18 @@ class ZiHeaderBar extends StatelessWidget {
           ],
         ),
       ),
-      // Keeps the title centred where the design puts the history button.
-      const SizedBox(width: 64),
+      const SizedBox(width: 16),
+      if (trailingIcon case final icon?)
+        ZiCircleButton(
+          key: trailingKey,
+          icon: icon,
+          onTap: onTrailing,
+          background: style.fill,
+          iconColor: style.ink,
+          tooltip: trailingLabel,
+        )
+      else
+        const SizedBox(width: 48),
     ]),
   );
 }

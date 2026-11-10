@@ -13,6 +13,7 @@ import 'auth/token_source.dart';
 import 'chat/audio_queue.dart';
 import 'chat/chat_cubit.dart';
 import 'chat/chat_settings.dart';
+import 'chat/history.dart';
 import 'proxy/proxy_executor.dart';
 import 'proxy/tool_runner.dart';
 import 'ui/chat_sheet.dart';
@@ -71,7 +72,9 @@ class ZiRuntime {
     required this.openRoute,
     required ZiTokenSource tokens,
     required this.builders,
-  }) : _tokens = tokens;
+    required ZiFileStore store,
+  }) : _tokens = tokens,
+       _store = store;
 
   static ZiRuntime? instance;
 
@@ -90,7 +93,11 @@ class ZiRuntime {
   late final ZiChatCubit chat;
   final FutureOr<void> Function(String route)? openRoute;
   final Map<String, ZiComponentBuilder> builders;
+  final ZiFileStore _store;
   ZiTokenSource _tokens;
+
+  /// The user's past conversations (`/v1/conversations`).
+  late final ZiHistory history = ZiHistory(api: api, tokens: () => _tokens);
   String? _language;
   late final ZiToolRunner _tools;
 
@@ -135,6 +142,7 @@ class ZiRuntime {
       openRoute: openRoute,
       tokens: userToken != null ? CallbackTokenSource(userToken) : const AnonymousTokenSource(),
       builders: builders,
+      store: files,
     );
     final turns = ZiTurnClient(api: api, tokens: () => runtime._tokens);
     final tools = runtime._tools = ZiToolRunner(handlers: handlers, proxy: proxy);
@@ -186,10 +194,12 @@ class ZiRuntime {
     _tokens = fetch != null ? CallbackTokenSource(fetch) : const AnonymousTokenSource();
   }
 
-  /// Sign-out: forget the conversation and the user's token.
+  /// Sign-out: forget the conversation and the user's token, and become a
+  /// new install, so the next person on the phone doesn't see the history.
   Future<void> clearUser() async {
     chat.reset();
     setUserToken(null);
+    api.installId = await renewInstallId(_store);
   }
 
   Future<void> openChat(BuildContext context, {String? title}) {
@@ -206,6 +216,7 @@ class ZiRuntime {
     builders: builders,
     openRoute: openRoute,
     title: title,
+    history: history,
   );
   }
 

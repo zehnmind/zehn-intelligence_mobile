@@ -62,6 +62,14 @@ Future<String> loadInstallId(ZiFileStore store) async {
   return id;
 }
 
+/// A new install id in place of the kept one: after a sign-out the next
+/// person on the phone is a new user, with none of the last one's history.
+Future<String> renewInstallId(ZiFileStore store) async {
+  final id = newInstallId(Random.secure());
+  await store.write('install', {'install_id': id});
+  return id;
+}
+
 final _uuid = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 
 String _hyphenated(String hex) =>

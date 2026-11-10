@@ -97,7 +97,13 @@ final class ZiErrorItem extends ZiChatItem {
 }
 
 class ZiChatState extends Equatable {
-  const ZiChatState({this.items = const [], this.busy = false, this.suggestions = const [], this.conversationId});
+  const ZiChatState({
+    this.items = const [],
+    this.busy = false,
+    this.suggestions = const [],
+    this.conversationId,
+    this.readOnly = false,
+  });
 
   final List<ZiChatItem> items;
 
@@ -107,6 +113,10 @@ class ZiChatState extends Equatable {
   /// Chips: starter questions for an empty chat, follow-ups after an answer.
   final List<String> suggestions;
   final String? conversationId;
+
+  /// A conversation from the history that can't go on (another spec
+  /// version, or full): it is shown, and nothing more is sent in it.
+  final bool readOnly;
 
   ZiChatState copyWith({
     List<ZiChatItem>? items,
@@ -119,8 +129,9 @@ class ZiChatState extends Equatable {
     busy: busy ?? this.busy,
     suggestions: suggestions ?? this.suggestions,
     conversationId: clearConversation ? null : conversationId ?? this.conversationId,
+    readOnly: readOnly,
   );
 
   @override
-  List<Object?> get props => [items, busy, suggestions, conversationId];
+  List<Object?> get props => [items, busy, suggestions, conversationId, readOnly];
 }

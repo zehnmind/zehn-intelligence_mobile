@@ -40,7 +40,15 @@ Our calls (the user can revisit them):
   wins over what the server sends. TCM keeps working unchanged while it migrates.
 - **Old engine stays.** The on-device engine (`ZehnIntelligence.start`, transports, packs)
   is left in place and marked deprecated; `init` no longer uses it. Deleting it is later work.
-- **History screen** (`/v1/conversations`) is not part of this change. Suggestions are.
+- **History.** The landing's history button opens the user's conversations
+  (`GET /v1/conversations`, 20 a page, latest first). Tap one to reopen it as the chat showed
+  it (`GET /v1/conversations/{id}`): text, `inline` cards and confirm cards with their status.
+  A `sheet` or `route` was opened, not shown, so it is left out and never opened again. One with
+  `can_continue: true` takes the next question with its `conversation_id`; one with `false` is
+  read-only, with a note and a "New chat" button where the input was, and its unanswered
+  confirm cards show as expired. Swipe left to delete (`DELETE`); a refusal keeps the row and
+  says so. History is per install, so `clearUser()` (sign-out) makes a new install id and the
+  next person on the phone sees none of it.
 - **The app key** comes from `init(token:)`; if it is missing, from the config file or
   `--dart-define` as today, so existing builds keep working.
 
@@ -238,7 +246,7 @@ catalog lacks draws nothing in release builds and a red note in debug builds. Th
 ## Not in this change
 
 Backend work (built on the backend's `feat/proxy-sdk` branch, not deployed yet), the
-analyzer, the console editor, the history screen, deleting the old engine, TCM's migration.
+analyzer, the console editor, deleting the old engine, TCM's migration.
 
 ## Done means
 

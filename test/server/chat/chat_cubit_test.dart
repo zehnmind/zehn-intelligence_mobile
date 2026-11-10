@@ -5,6 +5,7 @@ import 'package:zehn_intelligence/src/server/api/turn_client.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
+import 'package:zehn_intelligence/src/server/chat/history.dart';
 
 import '../../support/chat_fakes.dart';
 
@@ -339,6 +340,67 @@ void main() {
       await cubit.decide('a1', confirm: true);
       cubit.reset();
       expect(cubit.takeConfirmed('a1'), isFalse);
+    });
+  });
+  group('history', () {
+    ZiConversation past({required bool canContinue, List<ZiChatItem>? items}) => ZiConversation(
+      summary: ZiConversationSummary(
+        id: 'c9',
+        title: 'Kino',
+        createdAt: DateTime.utc(2026, 11, 6, 9),
+        lastTurnAt: DateTime.utc(2026, 11, 6, 9, 5),
+        canContinue: canContinue,
+      ),
+      items: items ?? const [ZiUserItem('Kino'), ZiAssistantItem('h1', 'Cinematica, 4th floor.')],
+    );
+
+    test('a conversation from the history goes on: the next question carries its id', () async {
+      cubit.resume(past(canContinue: true));
+      expect(cubit.state.items, past(canContinue: true).items);
+      expect(cubit.state.conversationId, 'c9');
+      expect(cubit.state.readOnly, isFalse);
+      turns.script([const TurnStarted(conversationId: 'c9', conversationNew: false, turnId: 't2'), const TextDelta(text: 'Yes'), done]);
+      await cubit.sendText('Is it open now?');
+      expect(turns.starts.single.conversationId, 'c9');
+      expect(cubit.state.items, [
+        ...past(canContinue: true).items,
+        const ZiUserItem('Is it open now?'),
+        const ZiAssistantItem('a1', 'Yes'),
+      ]);
+    });
+
+    test("one that can't go on is read-only: nothing is sent and its pending cards are expired", () async {
+      const pending = ZiConfirmItem(actionId: 'a1', tool: 'parking.reserve', method: '');
+      const confirmed = ZiConfirmItem(actionId: 'a0', tool: 'parking.reserve', method: '', status: ZiConfirmStatus.confirmed);
+      cubit.resume(past(canContinue: false, items: const [ZiUserItem('Park'), confirmed, pending]));
+      expect(cubit.state.readOnly, isTrue);
+      expect(cubit.state.conversationId, isNull);
+      expect(cubit.state.items, [const ZiUserItem('Park'), confirmed, pending.withStatus(ZiConfirmStatus.expired)]);
+      await cubit.sendText('more');
+      await cubit.sendAudio('AAAA', 'm4a', voiceReply: false);
+      await cubit.decide('a1', confirm: true);
+      expect(turns.starts, isEmpty);
+    });
+
+    test('opening one stops the turn that was running', () async {
+      final leg = StreamController<TurnEvent>();
+      addTearDown(leg.close);
+      turns.legs.add(leg.stream);
+      unawaited(cubit.sendText('hi'));
+      await pumpEventQueue();
+      expect(cubit.state.busy, isTrue);
+      cubit.resume(past(canContinue: true));
+      leg.add(const TextDelta(text: 'late'));
+      await pumpEventQueue();
+      expect(cubit.state.busy, isFalse);
+      expect(cubit.state.items, past(canContinue: true).items);
+      expect(audio.stops, greaterThan(0));
+    });
+
+    test('reset after a read-only one is a new chat', () {
+      cubit.resume(past(canContinue: false));
+      cubit.reset();
+      expect(cubit.state, const ZiChatState());
     });
   });
 }

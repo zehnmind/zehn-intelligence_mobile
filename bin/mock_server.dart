@@ -4,7 +4,9 @@
 //   dart run zehn_intelligence:mock_server [--port 8787]
 //
 // Console side: GET /v1/config, GET /v1/suggestions, POST /v1/turns
-// (questions and Confirm/Cancel taps), POST /v1/turns/{id}/tool-results.
+// (questions and Confirm/Cancel taps), POST /v1/turns/{id}/tool-results,
+// and the history: GET /v1/conversations, GET and DELETE
+// /v1/conversations/{id}, per install, kept in memory while it runs.
 // Customer side, under /customer: GET /cinematica/ (public),
 // GET /loyalty/cards/my (needs `Authorization: Bearer demo`) and
 // POST /parking/reservations. Every request is logged as one line.
@@ -56,6 +58,34 @@ var _nextTurn = 0;
 final _actions = <String, _PendingTurn>{};
 var _nextAction = 0;
 
+/// A conversation as the history shows it, per install.
+class _Conversation {
+  _Conversation(this.install) : createdAt = DateTime.now().toUtc(), lastTurnAt = DateTime.now().toUtc();
+
+  final String install;
+  final DateTime createdAt;
+  DateTime lastTurnAt;
+  final List<Map<String, Object?>> messages = [];
+
+  Map<String, Object?> summary(String id) {
+    final first = messages.firstWhere((m) => m['role'] == 'user', orElse: () => const {})['text'];
+    final title = first is String ? first : '';
+    return {
+      'conversation_id': id,
+      'title': title.length <= 80 ? title : '${title.substring(0, 79)}…',
+      'created_at': createdAt.toIso8601String(),
+      'last_turn_at': lastTurnAt.toIso8601String(),
+      'spec_version': '1.0.0',
+      'can_continue': true,
+    };
+  }
+}
+
+final _conversations = <String, _Conversation>{};
+
+/// Which conversation each turn belongs to, so its events are kept.
+final _turnConversation = <String, String>{};
+
 class _PendingTurn {
   _PendingTurn(this.language, this.tool, [this.args = const {}]);
 
@@ -85,6 +115,8 @@ Future<void> _handle(HttpRequest req, int port) async {
       } else {
         await _startTurn(req, (json as Map).cast<String, Object?>());
       }
+    } else if (path == '/v1/conversations' || path.startsWith('/v1/conversations/')) {
+      status = await _history(req, path);
     } else if (req.method == 'POST' && path.startsWith('/v1/turns/') && path.endsWith('/tool-results')) {
       final id = path.split('/')[3];
       await _results(req, id, (json as Map).cast<String, Object?>());
@@ -114,6 +146,81 @@ Future<void> _handle(HttpRequest req, int port) async {
 bool _known(HttpRequest req) =>
     (req.headers.value('authorization') ?? '').startsWith('Bearer ') || (req.headers.value('x-zi-install-id') ?? '').isNotEmpty;
 
+/// The history calls; answers with the status it sent.
+Future<int> _history(HttpRequest req, String path) async {
+  final install = req.headers.value('x-zi-install-id') ?? '';
+  final id = path.length > '/v1/conversations/'.length ? path.substring('/v1/conversations/'.length) : null;
+  if (id == null && req.method == 'GET') {
+    final page = int.tryParse(req.uri.queryParameters['page'] ?? '') ?? 1;
+    final size = int.tryParse(req.uri.queryParameters['size'] ?? '') ?? 20;
+    final mine = _conversations.entries.where((e) => e.value.install == install && e.value.messages.isNotEmpty).toList()
+      ..sort((a, b) => b.value.lastTurnAt.compareTo(a.value.lastTurnAt));
+    await _json(req, 200, {
+      'items': [for (final e in mine.skip((page - 1) * size).take(size)) e.value.summary(e.key)],
+      'total': mine.length,
+      'page': page,
+      'size': size,
+    });
+    return 200;
+  }
+  final conversation = _conversations[id];
+  if (id == null || conversation == null || conversation.install != install) {
+    await _json(req, 404, {'code': 'conversation_not_found', 'message': 'No such conversation.'});
+    return 404;
+  }
+  if (req.method == 'DELETE') {
+    _conversations.remove(id);
+    req.response.statusCode = 204;
+    await req.response.close();
+    return 204;
+  }
+  await _json(req, 200, {...conversation.summary(id), 'messages': conversation.messages});
+  return 200;
+}
+
+/// Keeps what the chat showed of a turn, for the history.
+void _keep(String turnId, String name, Map<String, Object?> data) {
+  final conversation = _conversations[_turnConversation[turnId]];
+  if (conversation == null) return;
+  conversation.lastTurnAt = DateTime.now().toUtc();
+  final at = conversation.lastTurnAt.toIso8601String();
+  final shown = conversation.messages;
+  switch (name) {
+    case 'text.delta':
+      final last = shown.isEmpty ? null : shown.last;
+      if (last != null && last['role'] == 'assistant' && last['type'] == 'text' && last['turn_id'] == turnId) {
+        last['text'] = '${last['text']}${data['text']}';
+      } else {
+        shown.add({'role': 'assistant', 'type': 'text', 'text': data['text'], 'turn_id': turnId, 'at': at});
+      }
+    case 'mount_component':
+      shown.add({
+        'role': 'assistant',
+        'type': 'component',
+        'component': data['component'],
+        'kind': data['kind'],
+        'props': data['props'],
+        if (data['surface'] != null) 'surface': data['surface'],
+        if (data['route'] != null) 'route': data['route'],
+        'turn_id': turnId,
+        'at': at,
+      });
+    case 'confirm':
+      shown.add({
+        'role': 'assistant',
+        'type': 'confirm',
+        'action_id': data['action_id'],
+        'tool': data['tool'],
+        'surface': data['surface'],
+        'props': data['props'],
+        'confirm_label': data['confirm_label'],
+        'status': 'pending',
+        'turn_id': turnId,
+        'at': at,
+      });
+  }
+}
+
 Future<void> _json(HttpRequest req, int status, Object? body) async {
   req.response
     ..statusCode = status
@@ -130,6 +237,7 @@ Future<void> _sse(HttpRequest req, String turnId, List<(String, Map<String, Obje
     ..bufferOutput = false;
   var seq = 0;
   for (final (name, data) in events) {
+    _keep(turnId, name, data);
     seq++;
     req.response.write('event: $name\nid: $seq\ndata: ${jsonEncode({'turn_id': turnId, 'seq': seq, ...data})}\n\n');
     await req.response.flush();
@@ -149,6 +257,14 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
   final language = body['language'] is String ? body['language'] as String : 'en';
   final conversation = body['conversation_id'] is String ? body['conversation_id'] as String : 'conv_$turnId';
   final text = _text(body);
+  final shown = _conversations.putIfAbsent(conversation, () => _Conversation(req.headers.value('x-zi-install-id') ?? ''));
+  _turnConversation[turnId] = conversation;
+  final asked = (body['input'] as Map?)?['text'];
+  if ((body['input'] as Map?)?['type'] == 'audio') {
+    shown.messages.add({'role': 'user', 'type': 'text', 'text': 'kino haqida', 'spoken': true, 'turn_id': turnId});
+  } else if (asked is String) {
+    shown.messages.add({'role': 'user', 'type': 'text', 'text': asked.trim(), 'spoken': false, 'turn_id': turnId});
+  }
   final started = ('turn.started', <String, Object?>{'conversation_id': conversation, 'conversation_new': body['conversation_id'] == null});
   final spoken = (body['input'] as Map?)?['type'] == 'audio';
   final transcript = [if (spoken) ('transcript', <String, Object?>{'text': 'kino haqida', 'language': language})];
@@ -239,6 +355,13 @@ Future<void> _answerAction(
   String language,
 ) async {
   final action = _actions.remove(input['action_id']);
+  for (final c in _conversations.values) {
+    for (final m in c.messages) {
+      if (m['type'] == 'confirm' && m['action_id'] == input['action_id'] && action != null) {
+        m['status'] = input['decision'] == 'confirm' ? 'confirmed' : 'cancelled';
+      }
+    }
+  }
   if (action == null) {
     await _json(req, 409, {'code': 'action_used', 'message': 'This action was already answered.'});
     return;

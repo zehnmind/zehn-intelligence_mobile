@@ -8,6 +8,7 @@ import '../api/turn_events.dart';
 import '../proxy/tool_runner.dart';
 import 'audio_queue.dart';
 import 'chat_state.dart';
+import 'history.dart';
 
 /// Runs the conversation over the server's turn flow: one turn at a time,
 /// tool rounds through [ZiToolRunner], components into the chat or out
@@ -57,7 +58,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
 
   Future<void> sendText(String text) async {
     var t = text.trim();
-    if (t.isEmpty || state.busy || isClosed) return;
+    if (t.isEmpty || state.busy || state.readOnly || isClosed) return;
     if (t.length > maxTextLength) t = t.substring(0, maxTextLength);
     final input = TurnInput.text(
       conversationId: state.conversationId,
@@ -69,7 +70,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   }
 
   Future<void> sendAudio(String base64, String format, {required bool voiceReply}) async {
-    if (state.busy || isClosed) return;
+    if (state.busy || state.readOnly || isClosed) return;
     final input = TurnInput.audio(
       conversationId: state.conversationId,
       base64: base64,
@@ -162,6 +163,29 @@ class ZiChatCubit extends Cubit<ZiChatState> {
 
   /// Forgets the conversation (sign-out, "new chat").
   void reset() {
+    _forget();
+    _emit(const ZiChatState());
+  }
+
+  /// Shows a conversation from the history in place of the current one. One
+  /// that can go on takes the next question; one that can't is read-only,
+  /// and its unanswered confirm cards are past answering.
+  void resume(ZiConversation conversation) {
+    _forget();
+    final open = conversation.canContinue;
+    _emit(ZiChatState(
+      items: [
+        for (final item in conversation.items)
+          !open && item is ZiConfirmItem && item.status == ZiConfirmStatus.pending
+              ? item.withStatus(ZiConfirmStatus.expired)
+              : item,
+      ],
+      conversationId: open ? conversation.id : null,
+      readOnly: !open,
+    ));
+  }
+
+  void _forget() {
     _hangUp();
     _last = null;
     _confirmed.clear();
@@ -169,7 +193,6 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       timer.cancel();
     }
     _expiry.clear();
-    _emit(const ZiChatState());
   }
 
   @override

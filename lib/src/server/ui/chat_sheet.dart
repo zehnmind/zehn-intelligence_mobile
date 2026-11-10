@@ -11,6 +11,8 @@ import '../../ui/zehn_integrator.dart' show ZiComponentController;
 import '../chat/chat_cubit.dart';
 import '../chat/chat_settings.dart';
 import '../chat/chat_state.dart';
+import '../chat/history.dart';
+import '../chat/history_cubit.dart';
 import '../surface/surface.dart';
 import '../surface/surface_view.dart';
 import 'chrome.dart';
@@ -24,7 +26,7 @@ typedef ZiComponentBuilder = Widget Function(BuildContext context, Map<String, O
 
 /// The assistant, in a bottom sheet, in the zehn/intelligence design:
 /// a landing (welcome, the soap-bubble orb, suggestions), listening (halo
-/// and waveform) and the conversation.
+/// and waveform), the conversation, and the user's past conversations.
 class ZiChatSheet extends StatefulWidget {
   const ZiChatSheet({
     super.key,
@@ -35,6 +37,7 @@ class ZiChatSheet extends StatefulWidget {
     this.openRoute,
     this.title,
     this.recorderFactory,
+    this.history,
   });
 
   static const maxRecordingBytes = 1024 * 1024;
@@ -53,6 +56,9 @@ class ZiChatSheet extends StatefulWidget {
   /// The microphone; the SDK's own recorder when null.
   final ZiVoiceRecorder Function()? recorderFactory;
 
+  /// The user's past conversations; null shows no history button.
+  final ZiHistory? history;
+
   static Future<void> show(
     BuildContext context, {
     required ZiChatCubit cubit,
@@ -62,6 +68,7 @@ class ZiChatSheet extends StatefulWidget {
     required FutureOr<void> Function(String route)? openRoute,
     String? title,
     ZiVoiceRecorder Function()? recorderFactory,
+    ZiHistory? history,
   }) {
     final style = ZiChatStyle.fromTheme(settings.value.theme);
     return showModalBottomSheet<void>(
@@ -84,6 +91,7 @@ class ZiChatSheet extends StatefulWidget {
             openRoute: openRoute,
             title: title,
             recorderFactory: recorderFactory,
+            history: history,
           ),
         ),
       ),
@@ -94,11 +102,14 @@ class ZiChatSheet extends StatefulWidget {
   State<ZiChatSheet> createState() => _ZiChatSheetState();
 }
 
-enum _View { landing, listening, conversation }
+enum _View { landing, listening, conversation, history }
 
 class _ZiChatSheetState extends State<ZiChatSheet> {
   final _text = TextEditingController();
   final _scroll = ScrollController();
+  final _historyScroll = ScrollController();
+  ZiHistoryCubit? _historyCubit;
+  bool _showHistory = false;
   StreamSubscription<ZiComponentItem>? _opens;
   StreamSubscription<double>? _levels;
   ZiVoiceRecorder? _recorder;
@@ -119,6 +130,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     _opens = widget.cubit.opens.listen(_open);
     widget.settings.addListener(_settingsChanged);
     _text.addListener(() => setState(() {}));
+    _historyScroll.addListener(_historyScrolled);
     unawaited(widget.cubit.loadStarterSuggestions());
   }
 
@@ -129,6 +141,8 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     unawaited(_levels?.cancel());
     _text.dispose();
     _scroll.dispose();
+    _historyScroll.dispose();
+    unawaited(_historyCubit?.close());
     unawaited(_recorder?.dispose());
     // Closing the chat stops spoken replies (MOBILE_INTEGRATION.md, section 4).
     unawaited(widget.cubit.stopAudio());
@@ -140,6 +154,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   }
 
   _View _view(ZiChatState state) {
+    if (_showHistory) return _View.history;
     if (_listening) return _View.listening;
     if (state.items.isNotEmpty || state.busy || _typing) return _View.conversation;
     return _View.landing;
@@ -258,6 +273,34 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     unawaited(widget.cubit.loadStarterSuggestions());
   }
 
+  // ---- history -------------------------------------------------------------
+
+  void _openHistory() {
+    final history = widget.history;
+    if (history == null) return;
+    unawaited((_historyCubit ??= ZiHistoryCubit(history)).load());
+    setState(() => _showHistory = true);
+  }
+
+  void _closeHistory() => setState(() => _showHistory = false);
+
+  void _historyScrolled() {
+    final position = _historyScroll.position;
+    if (position.pixels > position.maxScrollExtent - 200) unawaited(_historyCubit?.loadMore());
+  }
+
+  /// Shows a past conversation in the chat, from the time it started.
+  Future<void> _resume(ZiConversationSummary summary) async {
+    final conversation = await _historyCubit?.open(summary.id);
+    if (conversation == null || !mounted) return;
+    widget.cubit.resume(conversation);
+    setState(() {
+      _showHistory = false;
+      _typing = false;
+      _startedAt = conversation.createdAt.toLocal();
+    });
+  }
+
   Future<void> _startListening() async {
     if (!_speech) {
       setState(() => _typing = true);
@@ -351,6 +394,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
                             _View.landing => _landing(state, s, words),
                             _View.listening => _listeningView(s, words),
                             _View.conversation => _conversation(state, s, words),
+                            _View.history => _historyView(s, words),
                           },
                         ),
                       ),
@@ -375,6 +419,21 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
         leadingKey: const ValueKey('zi-close'),
         leadingLabel: words.close,
         onLeading: () => Navigator.of(context).maybePop(),
+        trailingIcon: widget.history != null ? 'chat_history' : null,
+        trailingKey: const ValueKey('zi-history'),
+        trailingLabel: words.history,
+        onTrailing: _openHistory,
+      );
+    }
+    if (view == _View.history) {
+      return ZiHeaderBar(
+        style: s,
+        title: words.history,
+        subtitle: null,
+        leadingIcon: 'arrow_left',
+        leadingKey: const ValueKey('zi-back'),
+        leadingLabel: words.back,
+        onLeading: _closeHistory,
       );
     }
     final started = _startedAt;
@@ -559,10 +618,118 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       if (followUps) ...[const SizedBox(height: 4), _chips(state.suggestions, s), const SizedBox(height: 4)],
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: _inputBar(state, s, words),
+        child: state.readOnly ? _ended(s, words) : _inputBar(state, s, words),
       ),
     ]);
   }
+
+  /// In place of the input under a conversation that can't go on.
+  Widget _ended(ZiChatStyle s, ZiStrings words) => Column(mainAxisSize: MainAxisSize.min, children: [
+    Text(words.chatEnded, style: s.small.copyWith(color: s.muted), textAlign: TextAlign.center),
+    const SizedBox(height: 8),
+    GestureDetector(
+      key: const ValueKey('zi-new-chat'),
+      onTap: _newChat,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        height: 48,
+        width: double.infinity,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(color: s.fill, borderRadius: BorderRadius.circular(100)),
+        child: Text(words.newChat, style: s.bodyMedium),
+      ),
+    ),
+  ]);
+
+  // ---- history list --------------------------------------------------------
+
+  Widget _historyView(ZiChatStyle s, ZiStrings words) => BlocBuilder<ZiHistoryCubit, ZiHistoryState>(
+    bloc: _historyCubit,
+    builder: (context, h) {
+      final error = h.error;
+      if (error != null) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(words.error(error), style: s.body.copyWith(color: s.muted), textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () => unawaited(_historyCubit?.load()),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(color: s.fill, borderRadius: BorderRadius.circular(100)),
+                  child: Text(words.retry, style: s.smallMedium),
+                ),
+              ),
+            ]),
+          ),
+        );
+      }
+      if (h.items.isEmpty) {
+        return Center(
+          child: h.loading
+              ? CircularProgressIndicator(color: s.accent)
+              : Text(words.historyEmpty, style: s.body.copyWith(color: s.muted)),
+        );
+      }
+      final notice = h.notice;
+      return Column(children: [
+        if (notice != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+            child: Text(words.error(notice), style: s.small.copyWith(color: s.danger)),
+          ),
+        Expanded(
+          child: ListView.separated(
+            controller: _historyScroll,
+            physics: const ClampingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            itemCount: h.items.length + (h.loading ? 1 : 0),
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
+            itemBuilder: (context, i) => i < h.items.length
+                ? _historyRow(h.items[i], h, s, words)
+                : Center(child: CircularProgressIndicator(color: s.accent)),
+          ),
+        ),
+      ]);
+    },
+  );
+
+  /// Tap to open, swipe left to delete.
+  Widget _historyRow(ZiConversationSummary c, ZiHistoryState h, ZiChatStyle s, ZiStrings words) => Dismissible(
+    key: ValueKey('zi-history-${c.id}'),
+    direction: DismissDirection.endToStart,
+    confirmDismiss: (_) async => await _historyCubit?.delete(c.id) ?? false,
+    background: Container(
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(color: s.danger, borderRadius: BorderRadius.circular(20)),
+      child: Text(words.delete, style: s.smallMedium.copyWith(color: s.onAccent)),
+    ),
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: h.opening == null ? () => unawaited(_resume(c)) : null,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: s.fill, borderRadius: BorderRadius.circular(20)),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(c.title.isEmpty ? words.chat : c.title, style: s.bodyMedium, maxLines: 2, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 4),
+              Text(_stamp(c.lastTurnAt.toLocal()), style: s.small.copyWith(color: s.muted)),
+            ]),
+          ),
+          if (h.opening == c.id) ...[
+            const SizedBox(width: 12),
+            SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2, color: s.accent)),
+          ],
+        ]),
+      ),
+    ),
+  );
 
   Widget _item(ZiChatItem item, ZiChatStyle s, ZiStrings words, {required bool busy}) => switch (item) {
     ZiUserItem() => Align(

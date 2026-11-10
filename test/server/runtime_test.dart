@@ -159,6 +159,22 @@ void main() {
       expect(runtime.tokens, isA<AnonymousTokenSource>());
     });
 
+    test('the history is this install\'s; clearUser makes a new install id, so the next person sees none of it', () async {
+      server.on('GET', '/v1/conversations', (req, _) => respondJson(req, 200, {'items': <Object>[], 'total': 0, 'page': 1, 'size': 20}));
+      final runtime = await create();
+      final before = runtime.api.installId;
+      await runtime.history.list();
+      await runtime.clearUser();
+      await runtime.history.list();
+      final sent = [for (final r in server.requests.where((r) => r.path == '/v1/conversations')) r.headers['x-zi-install-id']];
+      expect(sent.first, before);
+      expect(sent.last, isNot(before));
+      expect(sent.last, runtime.api.installId);
+      expect(sent.last, matches(RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')));
+      // Kept for the next launch.
+      expect((await create()).api.installId, sent.last);
+    });
+
     test('isSignedIn false keeps login-only tools from being called', () async {
       final runtime = await ZiRuntime.create(
         config: ZiInitConfig(appKey: 'zi_test_abc', consoleUrl: server.url),

@@ -97,6 +97,9 @@ class ZiApiClient {
   Future<Object?> postJson(String path, Object body, {String? userToken}) =>
       _json('POST', path, body: body, userToken: userToken);
 
+  /// Null for `204 No Content`.
+  Future<Object?> deleteJson(String path, {String? userToken}) => _json('DELETE', path, userToken: userToken);
+
   /// Opens an event stream. Throws [ZiApiException] when the answer is an
   /// error or not `text/event-stream`.
   Future<ResponseBody> postStream(
