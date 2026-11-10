@@ -18,13 +18,16 @@ final class ZiUserItem extends ZiChatItem {
 
 /// Assistant prose; may contain Markdown.
 final class ZiAssistantItem extends ZiChatItem {
-  const ZiAssistantItem(this.id, this.text);
+  const ZiAssistantItem(this.id, this.text, {this.turnId = ''});
 
   final String id;
   final String text;
 
+  /// The turn that wrote it; one turn can write more than one part.
+  final String turnId;
+
   @override
-  List<Object?> get props => [id, text];
+  List<Object?> get props => [id, text, turnId];
 }
 
 enum ZiComponentKind { inline, sheet, route }
@@ -103,6 +106,8 @@ class ZiChatState extends Equatable {
     this.suggestions = const [],
     this.conversationId,
     this.readOnly = false,
+    this.voiced = const {},
+    this.playing,
   });
 
   final List<ZiChatItem> items;
@@ -118,20 +123,31 @@ class ZiChatState extends Equatable {
   /// version, or full): it is shown, and nothing more is sent in it.
   final bool readOnly;
 
+  /// Turns whose spoken answer is held on the phone, to play again.
+  final Set<String> voiced;
+
+  /// The turn whose answer is being spoken.
+  final String? playing;
+
   ZiChatState copyWith({
     List<ZiChatItem>? items,
     bool? busy,
     List<String>? suggestions,
     String? conversationId,
     bool clearConversation = false,
+    Set<String>? voiced,
+    String? playing,
+    bool clearPlaying = false,
   }) => ZiChatState(
     items: items ?? this.items,
     busy: busy ?? this.busy,
     suggestions: suggestions ?? this.suggestions,
     conversationId: clearConversation ? null : conversationId ?? this.conversationId,
     readOnly: readOnly,
+    voiced: voiced ?? this.voiced,
+    playing: clearPlaying ? null : playing ?? this.playing,
   );
 
   @override
-  List<Object?> get props => [items, busy, suggestions, conversationId, readOnly];
+  List<Object?> get props => [items, busy, suggestions, conversationId, readOnly, voiced, playing];
 }

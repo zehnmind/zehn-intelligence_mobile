@@ -27,9 +27,14 @@ class ZiChatCubit extends Cubit<ZiChatState> {
        _language = language,
        _starterSuggestions = starterSuggestions,
        _utcOffset = utcOffsetMinutes ?? (() => DateTime.now().timeZoneOffset.inMinutes),
-       super(const ZiChatState());
+       super(const ZiChatState()) {
+    _drained = _audio.drained.listen((_) => _emit(state.copyWith(clearPlaying: true)));
+  }
 
   static const maxTextLength = 4000;
+
+  /// Spoken answers held to play again: the latest ones, in memory only.
+  static const maxSpokenAnswers = 20;
   static const _conversationErrors = {'conversation_not_found', 'conversation_spec_changed', 'conversation_full'};
 
   /// The card can no longer be answered.
@@ -44,6 +49,14 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   final StreamController<ZiComponentItem> _opens = StreamController.broadcast();
 
   StreamSubscription<TurnEvent>? _sub;
+  StreamSubscription<void>? _drained;
+
+  /// Each turn's `audio` clips, oldest turn first; never written to disk.
+  final Map<String, List<AudioClip>> _clips = {};
+
+  /// The user stopped the answer that is still coming: the rest of it is
+  /// held, not played.
+  bool _quiet = false;
 
   /// Actions the user confirmed whose write has not been made yet.
   final Set<String> _confirmed = {};
@@ -88,6 +101,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     if (last == null || state.busy || isClosed) return;
     final items = [...state.items];
     if (items.isNotEmpty && items.last is ZiErrorItem) items.removeLast();
+    _quiet = false;
     _emit(state.copyWith(items: items, busy: true, suggestions: const []));
     await _run(last.withConversation(state.conversationId), _generation);
   }
@@ -113,6 +127,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     _setStatus(actionId, confirm ? ZiConfirmStatus.confirmed : ZiConfirmStatus.cancelled);
     if (confirm) _confirmed.add(actionId);
     await _audio.stop();
+    _quiet = false;
     final input = TurnInput.action(
       conversationId: state.conversationId,
       actionId: actionId,
@@ -121,7 +136,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       utcOffsetMinutes: _utcOffset(),
     );
     _last = input;
-    _emit(state.copyWith(busy: true, suggestions: const []));
+    _emit(state.copyWith(busy: true, suggestions: const [], clearPlaying: true));
     await _run(input, _generation);
   }
 
@@ -187,6 +202,8 @@ class ZiChatCubit extends Cubit<ZiChatState> {
 
   void _forget() {
     _hangUp();
+    _clips.clear();
+    _quiet = false;
     _last = null;
     _confirmed.clear();
     for (final timer in _expiry.values) {
@@ -198,6 +215,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   @override
   Future<void> close() async {
     _hangUp();
+    unawaited(_drained?.cancel());
     for (final timer in _expiry.values) {
       timer.cancel();
     }
@@ -207,13 +225,39 @@ class ZiChatCubit extends Cubit<ZiChatState> {
 
   Future<void> _begin(TurnInput input, ZiUserItem user) async {
     await _audio.stop();
+    _quiet = false;
     _last = input;
-    _emit(state.copyWith(items: [...state.items, user], busy: true, suggestions: const []));
+    _emit(state.copyWith(items: [...state.items, user], busy: true, suggestions: const [], clearPlaying: true));
     await _run(input, _generation);
   }
 
-  /// Stops spoken replies (the chat sheet closed).
-  Future<void> stopAudio() => _audio.stop();
+  /// Stops the spoken answer (the chat sheet closed); the rest of an answer
+  /// still coming stays quiet.
+  Future<void> stopAudio() async {
+    if (state.busy) _quiet = true;
+    await _audio.stop();
+    _emit(state.copyWith(clearPlaying: true));
+  }
+
+  /// Plays a turn's answer again from the clips held, in `seq` order; a tap
+  /// on the answer being spoken stops it. Nothing else plays while a turn
+  /// runs.
+  Future<void> replay(String turnId) async {
+    if (isClosed) return;
+    if (state.playing == turnId) {
+      if (state.busy) _quiet = true;
+      await _audio.stop();
+      _emit(state.copyWith(clearPlaying: true));
+      return;
+    }
+    final clips = _clips[turnId];
+    if (state.busy || clips == null) return;
+    await _audio.stop();
+    _emit(state.copyWith(playing: turnId));
+    for (final clip in [...clips]..sort((a, b) => a.seq.compareTo(b.seq))) {
+      _audio.add(clip.seq, clip.data, clip.format);
+    }
+  }
 
   Future<void> _run(TurnInput input, int generation) async {
     try {
@@ -287,7 +331,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
           case TranscriptEvent():
             _replaceSpoken(event.text);
           case TextDelta():
-            _appendText(event.text);
+            _appendText(event.text, event.turnId);
           case ClientApiRequest():
             calls.add(event);
           case MountComponent():
@@ -295,7 +339,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
           case ConfirmEvent():
             _showConfirm(event);
           case AudioClip():
-            _audio.add(event.seq, event.data, event.format);
+            _speak(event);
           case SuggestionsEvent():
             _emit(state.copyWith(suggestions: event.items));
           case TurnPaused() || TurnDone() || TurnFailed():
@@ -314,15 +358,39 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     return leg.future;
   }
 
-  void _appendText(String delta) {
+  void _appendText(String delta, String turnId) {
     final items = [...state.items];
     final last = items.isEmpty ? null : items.last;
     if (last is ZiAssistantItem) {
-      items[items.length - 1] = ZiAssistantItem(last.id, last.text + delta);
+      items[items.length - 1] = ZiAssistantItem(last.id, last.text + delta, turnId: last.turnId);
     } else {
-      items.add(ZiAssistantItem('a${++_assistantIds}', delta));
+      items.add(ZiAssistantItem('a${++_assistantIds}', delta, turnId: turnId));
     }
     _emit(state.copyWith(items: items));
+  }
+
+  /// Plays a clip as it comes (unless the user stopped this answer) and
+  /// keeps it, so the answer can be played again.
+  void _speak(AudioClip clip) {
+    _keep(clip);
+    if (_quiet) return;
+    _audio.add(clip.seq, clip.data, clip.format);
+    if (clip.turnId.isNotEmpty && state.playing != clip.turnId) _emit(state.copyWith(playing: clip.turnId));
+  }
+
+  void _keep(AudioClip clip) {
+    final turn = clip.turnId;
+    if (turn.isEmpty) return;
+    final held = _clips[turn];
+    if (held != null) {
+      held.add(clip);
+      return;
+    }
+    _clips[turn] = [clip];
+    while (_clips.length > maxSpokenAnswers) {
+      _clips.remove(_clips.keys.first);
+    }
+    _emit(state.copyWith(voiced: {..._clips.keys}));
   }
 
   void _replaceSpoken(String text) {

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'formats.dart';
 import 'surface.dart';
 
 /// The only things a component's tap may ask for.
@@ -11,7 +12,8 @@ const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Chip', 'Header', 'I
 
 const _languages = {'uz', 'ru', 'en'};
 
-const _icons = <String, IconData>{
+/// The icons a template can name (`icon`); listed in `catalog/zehn.basic.json`.
+const ziIcons = <String, IconData>{
   'theaters': Icons.theaters_outlined,
   'layers': Icons.layers_outlined,
   'schedule': Icons.schedule,
@@ -23,6 +25,14 @@ const _icons = <String, IconData>{
   'parking': Icons.local_parking,
   'star': Icons.star_outline,
   'info': Icons.info_outline,
+  'car': Icons.directions_car_outlined,
+  'store': Icons.storefront_outlined,
+  'calendar': Icons.calendar_today_outlined,
+  'wallet': Icons.account_balance_wallet_outlined,
+  'person': Icons.person_outline,
+  'restaurant': Icons.restaurant,
+  'bus': Icons.directions_bus_outlined,
+  'gift': Icons.card_giftcard,
 };
 
 /// A tap the template asked for, with its arguments resolved.
@@ -82,13 +92,23 @@ class _Builder {
     return node is Map && _localized(node) ? _pick(node) : node;
   }
 
-  String _interpolate(String s, Object? item) =>
-      s.replaceAllMapped(RegExp(r'\{([^{}\s]+)\}'), (m) => '${_lookup(m[1]!, item) ?? ''}');
+  /// `{/a/b}`, or `{/a/b|format}` (`formats.dart`).
+  String _interpolate(String s, Object? item) => s.replaceAllMapped(RegExp(r'\{([^{}\s]+)\}'), (m) {
+    final inside = m[1]!;
+    final bar = inside.indexOf('|');
+    if (bar < 0) return '${_lookup(inside, item) ?? ''}';
+    return ziFormat(_lookup(inside.substring(0, bar), item), inside.substring(bar + 1), v.language);
+  });
 
-  /// A literal, `{"path": …}`, a language map, or a string with `{/a/b}`.
+  /// A literal, `{"path": …}` (with an optional `format`), a language map,
+  /// or a string with `{/a/b}`.
   Object? resolve(Object? value, Object? item) {
     if (value is Map) {
-      if (value['path'] is String) return _lookup(value['path'] as String, item);
+      if (value['path'] is String) {
+        final found = _lookup(value['path'] as String, item);
+        final format = value['format'];
+        return format is String ? ziFormat(found, format, v.language) : found;
+      }
       if (_localized(value)) return resolve(_pick(value), item);
       return {for (final e in value.entries) '${e.key}': resolve(e.value, item)};
     }
@@ -202,7 +222,7 @@ class _Builder {
           style: t.text(s['style'], color: t.color(s['color'], onSurface)),
         );
       case 'Chip':
-        final icon = _icons[s['icon']];
+        final icon = ziIcons[s['icon']];
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
@@ -223,7 +243,7 @@ class _Builder {
               width: 32,
               height: 32,
               decoration: BoxDecoration(color: chip, borderRadius: BorderRadius.circular(10)),
-              child: Icon(_icons[s['icon']] ?? Icons.label_outline, size: 18, color: muted),
+              child: Icon(ziIcons[s['icon']] ?? Icons.label_outline, size: 18, color: muted),
             ),
             Expanded(child: Text(text(s['title'], item), style: t.text('title', color: onSurface))),
             if (tap != null) Icon(Icons.chevron_right, color: muted),
@@ -237,7 +257,7 @@ class _Builder {
             padding: const EdgeInsets.symmetric(vertical: 11),
             decoration: BoxDecoration(border: Border(bottom: BorderSide(color: t.color('border', chip)))),
             child: Row(spacing: 12, children: [
-              Icon(_icons[s['icon']] ?? Icons.info_outline, size: 18, color: muted),
+              Icon(ziIcons[s['icon']] ?? Icons.info_outline, size: 18, color: muted),
               Expanded(child: Text(text(s['text'], item), style: t.text('body', color: onSurface))),
               if (tap != null) Icon(Icons.chevron_right, size: 18, color: muted),
             ]),
@@ -246,7 +266,7 @@ class _Builder {
       case 'Button':
         final secondary = s['variant'] == 'secondary';
         final fg = secondary ? onSurface : t.color('on_accent', Colors.white);
-        final icon = _icons[s['icon']];
+        final icon = ziIcons[s['icon']];
         return Material(
           color: secondary ? chip : t.color('accent', Colors.orange),
           borderRadius: BorderRadius.circular(t.radius('button', 16)),

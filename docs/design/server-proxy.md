@@ -159,12 +159,10 @@ are shared). No user token.
 
 ```json
 {
-  "spec_version": "1.2.0",
   "assistant_name": "Mall guide",
   "app_name": "Tashkent City Mall",
   "languages": ["uz", "ru", "en"],
   "default_language": "uz",
-  "services": ["llm", "stt"],
   "theme": { "font": "CeraPro", "colors": {}, "text": {}, "radius": {} },
   "copy": {
     "welcome_title": { "uz": "Qanday yordam bera olaman?", "en": "How can I help you?" },
@@ -178,11 +176,10 @@ are shared). No user token.
   `default_language`, else `en`, else the first.
 - The language the SDK uses: the app's `setLanguage`, else the phone's if listed in
   `languages`, else `default_language`, else the first listed.
-- `services`: `stt` shows the mic, `tts` asks for spoken replies.
 - `404 spec_not_found`: nothing is published; `ZehnAiButton` hides and `openChat` does
   nothing. Any other failure keeps the last settings (the SDK's defaults at first).
-- `spec_version` is not sent back: the SDK never sends `X-ZI-Spec-Version`, which would make
-  the server treat the build as one that pins a spec (no cards, no writes).
+- No spec version either way: the server picks it. The SDK never sends `X-ZI-Spec-Version`,
+  which would make the server treat the build as one that pins a spec (no cards, no writes).
 
 `GET /v1/suggestions` gives only the starter chips.
 
@@ -205,8 +202,8 @@ As `MOBILE_INTEGRATION.md`, with these SDK specifics:
   its calls at once, each through: in-app handler → the call's `request` → error
   `handler_not_registered`. Each call has 20 s; results over 32 KB become `result_too_large`.
   All results go in one `tool-results` request.
-- `confirm`: a card with Cancel and Confirm (section above); writes wait for it. In-app
-  handlers never ask.
+- `confirm`: one card, the template with Cancel and Confirm inside its frame (section above);
+  writes wait for it. In-app handlers never ask.
 - Proxy errors the model reads: `not_confirmed`, `not_signed_in`, `host_not_allowed`, `method_not_allowed`,
   `invalid_request` (a broken `request`), `http_error` (message names the status),
   `network_error`, `timeout`, `handler_failed`, `result_too_large`.
@@ -217,15 +214,19 @@ As `MOBILE_INTEGRATION.md`, with these SDK specifics:
   `inline` draws in the chat; `sheet` opens a bottom sheet; `route` closes the chat sheet and
   calls `openRoute` with the event's `route` exactly as sent (the server filled and escaped it).
   See `docs/DYNAMIC_CARDS.md`.
-- `audio`: queued and played in `seq` order; a new question or closing the chat stops it.
+- `audio`: every answer is spoken. Clips are queued and played in `seq` order; a new question
+  or closing the chat stops them (the rest of that answer stays quiet). Each turn's clips are
+  kept in memory, for the last 20 answers, so a speaker under the turn's last text part plays
+  it again (a tap while it plays stops it). They are dropped on New chat, on opening another
+  conversation, and on `clearUser()`; nothing is written to disk or asked of the server. An
+  answer with no clips held (from the history, or whose speech failed) has no speaker.
 - `suggestions` and `GET /v1/suggestions` show as chips; a tap sends the text.
 - Errors follow the doc's table: token errors retry once with a new user token (none without
   one); conversation
   errors (`conversation_not_found`, `conversation_spec_changed`, `conversation_full`) resend
   once with `conversation_id: null`; `stream_interrupted` after 45 s without a ping; others are
   shown, with "try again" only when retryable.
-- Voice: the mic shows only when the chat settings have `stt`; spoken replies only with `tts`.
-  Recordings are AAC in `.m4a`, sent whole, at most 1 MiB.
+- Voice: the mic is always shown. Recordings are AAC in `.m4a`, sent whole, at most 1 MiB.
 
 ## Components
 
@@ -239,7 +240,9 @@ The spike's renderer moves into the SDK with two fixes:
 Catalog `zehn.basic.v0`: `Box`, `Column`, `Row` (with `scroll`), `Image`, `Text`, `Chip`,
 `Header`, `InfoRow`, `Button` (`primary`/`secondary`), `Divider`. Values are literals,
 `{"path": "/a/b"}` (relative paths read the current list item), language maps
-`{"uz": …, "ru": …, "en": …}`, and strings with `{/a/b}` placeholders. A component the
+`{"uz": …, "ru": …, "en": …}`, and strings with `{/a/b}` placeholders; a path can name a
+format (`{/a|time}`, `{"path": "/a", "format": "money:UZS"}`; `docs/DYNAMIC_CARDS.md` §6.2).
+`catalog/zehn.basic.json` lists what this build draws, for the analyzer. A component the
 catalog lacks draws nothing in release builds and a red note in debug builds. The theme's
 `font` names a font family the app already ships; nothing is downloaded.
 

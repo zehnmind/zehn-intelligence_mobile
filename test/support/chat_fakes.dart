@@ -49,6 +49,7 @@ class FakeRunner extends ZiToolRunner {
 
 class FakeAudio implements ZiAudioQueue {
   final List<(int, String, String)> clips = [];
+  final StreamController<void> _drained = StreamController.broadcast();
   int stops = 0;
 
   @override
@@ -56,6 +57,12 @@ class FakeAudio implements ZiAudioQueue {
 
   @override
   Future<void> stop() async => stops++;
+
+  @override
+  Stream<void> get drained => _drained.stream;
+
+  /// Everything queued has been played.
+  void finish() => _drained.add(null);
 }
 
 TurnFailed failure(String code, {bool retryable = false}) =>

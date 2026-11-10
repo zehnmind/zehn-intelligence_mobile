@@ -403,4 +403,156 @@ void main() {
       expect(cubit.state, const ZiChatState());
     });
   });
+
+  group('spoken answers', () {
+    AudioClip clip(int seq, String turn) => AudioClip(format: 'mp3', text: '', data: '$turn:$seq', turnId: turn, seq: seq);
+    List<TurnEvent> answer(String turn, {List<int> seqs = const [1, 2]}) => [
+      TurnStarted(conversationId: 'c1', conversationNew: false, turnId: turn),
+      TextDelta(text: 'Answer $turn', turnId: turn),
+      for (final seq in seqs) clip(seq, turn),
+      TurnDone(outcome: 'answered', turnId: turn),
+    ];
+    Future<void> heardOut() async {
+      audio.finish();
+      await pumpEventQueue();
+    }
+
+    test('an answer keeps its clips under its turn and plays again in seq order', () async {
+      turns.script([
+        started,
+        const TextDelta(text: 'Part one', turnId: 't1'),
+        const MountComponent(callId: 'c', component: 'card', kind: 'inline', props: {}, turnId: 't1'),
+        const TextDelta(text: 'Part two', turnId: 't1'),
+        clip(3, 't1'),
+        clip(2, 't1'),
+        done,
+      ]);
+      await cubit.sendText('hi');
+      expect([for (final b in cubit.state.items.whereType<ZiAssistantItem>()) b.turnId], ['t1', 't1']);
+      expect(cubit.state.voiced, {'t1'});
+      expect(cubit.state.playing, 't1');
+      await heardOut();
+      expect(cubit.state.playing, isNull);
+      audio.clips.clear();
+      final stops = audio.stops;
+      await cubit.replay('t1');
+      expect(audio.stops, stops + 1);
+      expect(audio.clips, [(2, 't1:2', 'mp3'), (3, 't1:3', 'mp3')]);
+      expect(cubit.state.playing, 't1');
+    });
+
+    test('a tap on the playing answer stops it; another answer stops the first and plays', () async {
+      turns
+        ..script(answer('t1'))
+        ..script(answer('t2'));
+      await cubit.sendText('one');
+      await cubit.sendText('two');
+      await heardOut();
+      await cubit.replay('t1');
+      expect(cubit.state.playing, 't1');
+      final stops = audio.stops;
+      await cubit.replay('t1');
+      expect(cubit.state.playing, isNull);
+      expect(audio.stops, stops + 1);
+      await cubit.replay('t1');
+      audio.clips.clear();
+      await cubit.replay('t2');
+      expect(cubit.state.playing, 't2');
+      expect(audio.clips, [(1, 't2:1', 'mp3'), (2, 't2:2', 'mp3')]);
+    });
+
+    test('an answer without speech has nothing to play', () async {
+      turns.script([started, const TextDelta(text: 'Hi', turnId: 't1'), done]);
+      await cubit.sendText('hi');
+      expect(cubit.state.voiced, isEmpty);
+      await cubit.replay('t1');
+      expect(audio.clips, isEmpty);
+      expect(cubit.state.playing, isNull);
+    });
+
+    test('only the last 20 answers keep their clips', () async {
+      for (var i = 1; i <= 21; i++) {
+        turns.script(answer('t$i', seqs: [1]));
+      }
+      for (var i = 1; i <= 21; i++) {
+        await cubit.sendText('q$i');
+      }
+      expect(cubit.state.voiced, {for (var i = 2; i <= 21; i++) 't$i'});
+    });
+
+    test('a new chat, or another conversation, forgets the clips', () async {
+      turns.script(answer('t1'));
+      await cubit.sendText('one');
+      cubit.reset();
+      expect(cubit.state.voiced, isEmpty);
+      await cubit.replay('t1');
+      expect(cubit.state.playing, isNull);
+      turns.script(answer('t2'));
+      await cubit.sendText('two');
+      cubit.resume(ZiConversation(
+        summary: ZiConversationSummary(id: 'c9', title: '', createdAt: DateTime.utc(2026), lastTurnAt: DateTime.utc(2026)),
+        items: const [],
+      ));
+      expect(cubit.state.voiced, isEmpty);
+    });
+
+    test('stopping an answer that is still coming keeps the rest of it quiet', () async {
+      final leg = StreamController<TurnEvent>();
+      turns.legs.add(leg.stream);
+      final sending = cubit.sendText('hi');
+      leg
+        ..add(started)
+        ..add(const TextDelta(text: 'Hi', turnId: 't1'))
+        ..add(clip(1, 't1'));
+      await pumpEventQueue();
+      expect(cubit.state.playing, 't1');
+      await cubit.replay('t1');
+      expect(cubit.state.playing, isNull);
+      leg
+        ..add(clip(2, 't1'))
+        ..add(done);
+      await leg.close();
+      await sending;
+      expect(audio.clips, [(1, 't1:1', 'mp3')]);
+      expect(cubit.state.playing, isNull);
+      await cubit.replay('t1');
+      expect(audio.clips.skip(1), [(1, 't1:1', 'mp3'), (2, 't1:2', 'mp3')]);
+    });
+
+    test('closing the chat mid-answer keeps the rest of it quiet; the next answer speaks', () async {
+      final leg = StreamController<TurnEvent>();
+      turns.legs.add(leg.stream);
+      final sending = cubit.sendText('hi');
+      leg
+        ..add(started)
+        ..add(clip(1, 't1'));
+      await pumpEventQueue();
+      await cubit.stopAudio();
+      expect(cubit.state.playing, isNull);
+      leg
+        ..add(clip(2, 't1'))
+        ..add(done);
+      await leg.close();
+      await sending;
+      expect(audio.clips, [(1, 't1:1', 'mp3')]);
+      turns.script(answer('t2', seqs: [1]));
+      await cubit.sendText('again');
+      expect(audio.clips.last, (1, 't2:1', 'mp3'));
+    });
+
+    test('while a turn runs, an older answer is not played', () async {
+      turns.script(answer('t1'));
+      await cubit.sendText('one');
+      await heardOut();
+      final leg = StreamController<TurnEvent>();
+      addTearDown(leg.close);
+      turns.legs.add(leg.stream);
+      unawaited(cubit.sendText('two'));
+      await pumpEventQueue();
+      audio.clips.clear();
+      await cubit.replay('t1');
+      expect(audio.clips, isEmpty);
+      expect(cubit.state.playing, isNull);
+    });
+  });
 }

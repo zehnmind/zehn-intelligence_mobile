@@ -13,6 +13,9 @@ abstract interface class ZiAudioQueue {
 
   /// Stops playback and drops what is queued.
   Future<void> stop();
+
+  /// Fires when everything added has been played (not after [stop]).
+  Stream<void> get drained;
 }
 
 /// Plays clips one at a time through `audioplayers`, from temp files.
@@ -20,6 +23,7 @@ class AudioPlayerQueue implements ZiAudioQueue {
   AudioPlayerQueue();
 
   final SplayTreeMap<int, (String, String)> _queue = SplayTreeMap();
+  final StreamController<void> _drained = StreamController.broadcast();
   AudioPlayer? _player;
   bool _playing = false;
   int _epoch = 0;
@@ -30,9 +34,15 @@ class AudioPlayerQueue implements ZiAudioQueue {
     if (!_playing) unawaited(_next(_epoch));
   }
 
+  @override
+  Stream<void> get drained => _drained.stream;
+
   Future<void> _next(int epoch) async {
-    if (epoch != _epoch || _queue.isEmpty) {
+    // After a stop, the newer epoch owns the queue: an old one only leaves.
+    if (epoch != _epoch) return;
+    if (_queue.isEmpty) {
       _playing = false;
+      _drained.add(null);
       return;
     }
     _playing = true;

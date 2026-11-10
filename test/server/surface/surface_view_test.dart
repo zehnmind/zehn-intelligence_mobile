@@ -54,6 +54,44 @@ void main() {
     expect(find.text('4-qavat'), findsOneWidget);
   });
 
+  testWidgets('a placeholder can name a format', (tester) async {
+    await pump(tester, [
+      {'id': 'root', 'component': 'Column', 'children': ['hours', 'price', 'odd']},
+      {'id': 'hours', 'component': 'Text', 'text': '{/start|time} – {/end|time}'},
+      {'id': 'price', 'component': 'Text', 'text': '{/price|money:UZS}/soat'},
+      {'id': 'odd', 'component': 'Text', 'text': '{/price|shout}'},
+    ], data: {'start': '2026-11-10T12:30:00', 'end': '2026-11-10T14:00:00', 'price': 10000});
+    expect(find.text('12:30 – 14:00'), findsOneWidget);
+    expect(find.text('10\u00a0000\u00a0UZS/soat'), findsOneWidget);
+    expect(find.text('10000'), findsOneWidget);
+  });
+
+  testWidgets('a path value can name a format', (tester) async {
+    await pump(tester, [
+      {'id': 'root', 'component': 'Text', 'text': {'path': '/price', 'format': 'money:UZS'}},
+    ], data: {'price': '10000'}, language: 'en');
+    expect(find.text('10,000\u00a0UZS'), findsOneWidget);
+  });
+
+  testWidgets('the icons added for 0.5.0 draw', (tester) async {
+    const expected = {
+      'car': Icons.directions_car_outlined,
+      'store': Icons.storefront_outlined,
+      'calendar': Icons.calendar_today_outlined,
+      'wallet': Icons.account_balance_wallet_outlined,
+      'person': Icons.person_outline,
+      'restaurant': Icons.restaurant,
+      'bus': Icons.directions_bus_outlined,
+      'gift': Icons.card_giftcard,
+    };
+    for (final e in expected.entries) {
+      await pump(tester, [
+        {'id': 'root', 'component': 'Chip', 'text': 'x', 'icon': e.key},
+      ]);
+      expect(find.byIcon(e.value), findsOneWidget, reason: e.key);
+    }
+  });
+
   testWidgets('repeats a template over a list with relative paths', (tester) async {
     await pump(tester, [
       {'id': 'root', 'component': 'Column', 'children': {'componentId': 'row', 'path': '/movies'}},

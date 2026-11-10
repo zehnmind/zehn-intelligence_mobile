@@ -83,14 +83,14 @@ void main() {
     test('create asks for /v1/config in the background', () async {
       server.on('GET', '/v1/config', (req, _) async {
         await Future<void>.delayed(const Duration(milliseconds: 700));
-        await respondJson(req, 200, {'services': ['stt']});
+        await respondJson(req, 200, {'assistant_name': 'Mall guide'});
       });
       final sw = Stopwatch()..start();
       final runtime = await create();
       expect(sw.elapsedMilliseconds, lessThan(500));
-      expect(runtime.settings.value.speech, isFalse);
+      expect(runtime.settings.value.assistantName, isNull);
       await runtime.loadConfig();
-      expect(runtime.settings.value.speech, isTrue);
+      expect(runtime.settings.value.assistantName, 'Mall guide');
       expect(server.requests.where((r) => r.path == '/v1/config'), hasLength(1));
     });
 
@@ -108,7 +108,7 @@ void main() {
       server.on('GET', '/v1/config', (req, _) => respondJson(req, 200, {
             'languages': ['uz', 'xx'],
             'default_language': 'uz',
-            'services': ['llm', 'stt'],
+            'assistant_name': 'Mall guide',
             'copy': {'welcome_title': {'uz': 'Salom!'}},
           }));
       final runtime = await create();
@@ -116,7 +116,7 @@ void main() {
       expect(runtime.language, 'en');
       await runtime.loadConfig();
       expect(runtime.available.value, isTrue);
-      expect(runtime.settings.value.speech, isTrue);
+      expect(runtime.settings.value.assistantName, 'Mall guide');
       // The phone's language is not offered: the default one.
       expect(runtime.language, 'uz');
       expect(runtime.settings.value.welcomeTitle(runtime.language), 'Salom!');
@@ -133,13 +133,13 @@ void main() {
 
     test('a config that fails for another reason keeps the assistant and its last settings', () async {
       var fail = false;
-      server.on('GET', '/v1/config', (req, _) => fail ? respondJson(req, 503, {}) : respondJson(req, 200, {'services': ['stt']}));
+      server.on('GET', '/v1/config', (req, _) => fail ? respondJson(req, 503, {}) : respondJson(req, 200, {'assistant_name': 'Mall guide'}));
       final runtime = await create();
       await runtime.loadConfig();
       fail = true;
       await runtime.loadConfig();
       expect(runtime.available.value, isTrue);
-      expect(runtime.settings.value.speech, isTrue);
+      expect(runtime.settings.value.assistantName, 'Mall guide');
     });
 
     test('the starter suggestions are only suggestions', () async {

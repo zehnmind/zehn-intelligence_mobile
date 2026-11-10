@@ -25,10 +25,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
 /// What the console knows about the app: `api` (base_url, auth, headers),
-/// `tools`, `components`, `theme`, `copy`, `services`, `languages`,
-/// `default_language`, `spec_version`.
+/// `tools`, `components`, `theme`, `copy`, `languages`,
+/// `default_language`.
 late Map<String, Object?> _app;
 
 Future<void> main(List<String> args) async {
@@ -229,6 +231,35 @@ Future<void> _json(HttpRequest req, int status, Object? body) async {
   await req.response.close();
 }
 
+/// What each turn has said so far, for its `audio` clip.
+final _said = <String, String>{};
+
+/// A tone standing in for speech: 2 s, 16 kHz mono WAV, base64.
+final String _tone = () {
+  const rate = 16000, samples = 32000;
+  final b = BytesBuilder();
+  void u32(int v) => b.add([v & 255, v >> 8 & 255, v >> 16 & 255, v >> 24 & 255]);
+  void u16(int v) => b.add([v & 255, v >> 8 & 255]);
+  b.add(ascii.encode('RIFF'));
+  u32(36 + samples * 2);
+  b.add(ascii.encode('WAVEfmt '));
+  u32(16);
+  u16(1);
+  u16(1);
+  u32(rate);
+  u32(rate * 2);
+  u16(2);
+  u16(16);
+  b.add(ascii.encode('data'));
+  u32(samples * 2);
+  for (var n = 0; n < samples; n++) {
+    final fade = n < 800 ? n / 800 : (n > samples - 800 ? (samples - n) / 800 : 1.0);
+    final v = (sin(2 * pi * 660 * n / rate) * 8000 * fade).round();
+    u16(v & 0xFFFF);
+  }
+  return base64Encode(b.takeBytes());
+}();
+
 Future<void> _sse(HttpRequest req, String turnId, List<(String, Map<String, Object?>)> events) async {
   req.response
     ..statusCode = 200
@@ -236,6 +267,14 @@ Future<void> _sse(HttpRequest req, String turnId, List<(String, Map<String, Obje
     ..headers.set('x-zi-turn-id', turnId)
     ..bufferOutput = false;
   var seq = 0;
+  final said = events.where((e) => e.$1 == 'text.delta').map((e) => '${e.$2['text']}').join();
+  if (said.isNotEmpty) _said.update(turnId, (s) => s + said, ifAbsent: () => said);
+  // Every answer is spoken, typed or not: one clip before `done`.
+  final i = events.indexWhere((e) => e.$1 == 'done');
+  final spoken = _said[turnId];
+  if (i >= 0 && spoken != null) {
+    events = [...events]..insert(i, ('audio', {'format': 'wav', 'text': spoken, 'data': _tone}));
+  }
   for (final (name, data) in events) {
     _keep(turnId, name, data);
     seq++;
@@ -511,12 +550,10 @@ Map<String, Object?> _mount(String callId, String component, Map<String, Object?
 
 /// `GET /v1/config`.
 Map<String, Object?> _config() => {
-  'spec_version': _app['spec_version'] ?? '1.0.0',
   'assistant_name': ?_app['assistant_name'],
   'app_name': ?_app['app_name'],
   'languages': _app['languages'] ?? ['uz', 'ru', 'en'],
   'default_language': _app['default_language'] ?? 'uz',
-  'services': _app['services'] ?? ['llm'],
   'theme': _app['theme'] ?? const <String, Object?>{},
   'copy': _app['copy'] ?? const <String, Object?>{},
 };
@@ -540,8 +577,6 @@ const _starters = {
 };
 
 Map<String, Object?> _builtInApp(int port) => {
-  'spec_version': '1.0.3',
-  'services': ['llm', 'stt', 'tts'],
   'languages': ['uz', 'ru', 'en'],
   'default_language': 'uz',
   'api': {
@@ -578,6 +613,7 @@ final Map<String, Object?> _cinema = (jsonDecode(_data) as Map).cast<String, Obj
 // From spikes/dynamic_card_spike, with /cinema/ paths moved to the props root.
 const _cinemaSurface = r'''{"surfaceId": "cinema_details", "catalogId": "zehn.basic.v0", "root": "root", "components": [{"id": "root", "component": "Box", "color": "surface", "radius": "card", "padding": 16, "child": "body"}, {"id": "body", "component": "Column", "gap": 16, "children": ["photo", "intro", "contacts", "now_header", "movies", "buy"]}, {"id": "photo", "component": "Image", "src": {"path": "/photo_url"}, "height": 170, "radius": "image"}, {"id": "intro", "component": "Column", "gap": 8, "children": ["chips", "name", "description"]}, {"id": "chips", "component": "Row", "gap": 8, "children": ["category", "floor"]}, {"id": "category", "component": "Chip", "icon": "theaters", "text": {"path": "/category_name"}, "visible": {"path": "/category_name"}}, {"id": "floor", "component": "Chip", "icon": "layers", "text": {"uz": "{/floor}-qavat", "ru": "Этаж {/floor}", "en": "Floor {/floor}"}}, {"id": "name", "component": "Text", "style": "display", "text": {"path": "/name"}}, {"id": "description", "component": "Text", "style": "body", "maxLines": 4, "text": {"path": "/description"}}, {"id": "contacts", "component": "Column", "gap": 0, "children": ["hours", "phone", "site"]}, {"id": "hours", "component": "InfoRow", "icon": "schedule", "text": {"path": "/working_hours"}}, {"id": "phone", "component": "InfoRow", "icon": "phone", "text": {"path": "/phone"}, "action": {"name": "open_url", "args": {"url": "tel:{/phone}"}}}, {"id": "site", "component": "InfoRow", "icon": "language", "text": {"path": "/website"}, "action": {"name": "open_url", "args": {"url": "https://{/website}"}}}, {"id": "now_header", "component": "Header", "icon": "movie", "title": {"uz": "Hozir namoyishda", "ru": "В прокате", "en": "Now Showing"}, "action": {"name": "ask", "args": {"text": {"uz": "Bugun qanday filmlar bor?", "ru": "Какие фильмы сегодня?", "en": "What's on today?"}}}}, {"id": "movies", "component": "Row", "gap": 10, "scroll": true, "children": {"componentId": "movie_card", "path": "/movies"}}, {"id": "movie_card", "component": "Column", "width": 136, "gap": 6, "children": ["movie_poster", "movie_title", "movie_genre", "movie_rating"], "action": {"name": "call_tool", "args": {"tool": "movies.get", "title": {"path": "title"}}}}, {"id": "movie_poster", "component": "Image", "src": {"path": "image"}, "height": 196, "radius": "image"}, {"id": "movie_title", "component": "Text", "style": "title", "maxLines": 2, "text": {"path": "title"}}, {"id": "movie_genre", "component": "Text", "style": "caption", "color": "muted", "maxLines": 1, "text": {"path": "genre"}}, {"id": "movie_rating", "component": "Chip", "text": {"path": "rating"}}, {"id": "buy", "component": "Button", "icon": "ticket", "label": {"uz": "Chipta sotib olish", "ru": "Купить билет", "en": "Buy Ticket"}, "action": {"name": "open_route", "args": {"route": "/explore/{/id}/tickets"}}}]}''';
 // The server's default confirm template (CARDS_FOR_MOBILE.md, section 5).
-const _confirmSurface = r'''{"createSurface": {"surfaceId": "zi_confirm", "catalogId": "zehn.basic.v0", "root": "root", "components": [{"id": "root", "component": "Box", "color": "surface", "radius": "card", "padding": 16, "child": "body"}, {"id": "body", "component": "Column", "gap": 12, "children": ["title", "rows"]}, {"id": "title", "component": "Text", "style": "title", "text": {"uz": "Tasdiqlaysizmi?", "ru": "Подтвердить?", "en": "Confirm this?"}}, {"id": "rows", "component": "Column", "gap": 8, "children": {"componentId": "row", "path": "/rows"}}, {"id": "row", "component": "Row", "gap": 12, "children": ["label", "value"]}, {"id": "label", "component": "Text", "style": "caption", "color": "muted", "flex": 1, "text": {"path": "label"}}, {"id": "value", "component": "Text", "style": "body", "text": {"path": "value"}}]}}''';
+/// No framing root `Box`: the SDK draws the card's frame around it and its buttons.
+const _confirmSurface = r'''{"createSurface": {"surfaceId": "zi_confirm", "catalogId": "zehn.basic.v0", "root": "body", "components": [{"id": "body", "component": "Column", "gap": 12, "children": ["title", "rows"]}, {"id": "title", "component": "Text", "style": "title", "text": {"uz": "Tasdiqlaysizmi?", "ru": "Подтвердить?", "en": "Confirm this?"}}, {"id": "rows", "component": "Column", "gap": 8, "children": {"componentId": "row", "path": "/rows"}}, {"id": "row", "component": "Row", "gap": 12, "children": ["label", "value"]}, {"id": "label", "component": "Text", "style": "caption", "color": "muted", "flex": 1, "text": {"path": "label"}}, {"id": "value", "component": "Text", "style": "body", "text": {"path": "value"}}]}}''';
 const _theme = r'''{"font": "CeraPro", "colors": {"surface": "#FF19212F", "on_surface": "#E6FFFFFF", "muted": "#99FFFFFF", "chip": "#0DFFFFFF", "image_bg": "#08FFFFFF", "border": "#0DFFFFFF", "accent": "#FFBE7C6C", "on_accent": "#FFFFFFFF"}, "text": {"display": {"size": 30, "weight": 500, "height": 1.15}, "title": {"size": 17, "weight": 500, "height": 1.25}, "body": {"size": 15, "weight": 400, "height": 1.4}, "caption": {"size": 13, "weight": 400, "height": 1.3}}, "radius": {"card": 24, "image": 20, "chip": 100, "button": 16}}''';
 const _data = r'''{"id": 1, "name": "Cinematica", "floor": "4", "category_name": {"uz": "Kinoteatr", "ru": "Кинотеатр", "en": "Cinema"}, "description": {"uz": "Tashkent City Mall'dagi zamonaviy kinoteatr: 8 ta zal, IMAX va qulay o'rindiqlar.", "ru": "Современный кинотеатр в Tashkent City Mall: 8 залов, IMAX и удобные кресла.", "en": "A modern cinema in Tashkent City Mall: 8 halls, IMAX and comfortable seats."}, "working_hours": {"uz": "Har kuni 10:00 – 02:00", "ru": "Ежедневно 10:00 – 02:00", "en": "Every day 10:00 – 02:00"}, "phone": "+998 71 000 00 00", "website": "cinematica.example", "photo_url": "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=800&q=80", "movies": [{"title": "Michael", "genre": "Drama, Biography", "rating": "13+", "image": "https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=500&q=80"}, {"title": "F1: The Movie", "genre": "Action, Drama, Sport", "rating": "13+", "image": "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=500&q=80"}, {"title": "The Fantastic Four: First Steps", "genre": "Action", "rating": "13+", "image": "https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=500&q=80"}]}''';

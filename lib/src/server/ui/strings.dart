@@ -39,6 +39,8 @@ class ZiStrings {
   String get historyEmpty => _w['historyEmpty']!;
   String get delete => _w['delete']!;
   String get chatEnded => _w['chatEnded']!;
+  String get playAnswer => _w['playAnswer']!;
+  String get stopAnswer => _w['stopAnswer']!;
 
   /// Not translated: the brand line under the title.
   String get poweredBy => 'Powered by zehnmind.ai';
@@ -60,6 +62,8 @@ class ZiStrings {
     'historyEmpty': 'Hali suhbatlar yo‘q',
     'delete': 'O‘chirish',
     'chatEnded': 'Bu suhbatni davom ettirib bo‘lmaydi.',
+    'playAnswer': 'Javobni tinglash',
+    'stopAnswer': 'To‘xtatish',
     'confirm': 'Tasdiqlash',
     'decline': 'Bekor qilish',
     'confirmDefault': 'Tasdiqlaysizmi?',
@@ -100,6 +104,8 @@ class ZiStrings {
     'historyEmpty': 'Пока нет чатов',
     'delete': 'Удалить',
     'chatEnded': 'Этот чат нельзя продолжить.',
+    'playAnswer': 'Прослушать ответ',
+    'stopAnswer': 'Остановить',
     'confirm': 'Подтвердить',
     'decline': 'Отмена',
     'confirmDefault': 'Подтвердить?',
@@ -140,6 +146,8 @@ class ZiStrings {
     'historyEmpty': 'No chats yet',
     'delete': 'Delete',
     'chatEnded': 'This chat can’t be continued.',
+    'playAnswer': 'Play the answer',
+    'stopAnswer': 'Stop',
     'confirm': 'Confirm',
     'decline': 'Cancel',
     'confirmDefault': 'Confirm this?',

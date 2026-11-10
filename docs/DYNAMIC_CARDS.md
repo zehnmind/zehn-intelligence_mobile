@@ -3,7 +3,7 @@
 How the console defines the cards the assistant shows in a customer's app, and what the
 backend must store, validate and send so the mobile SDK can draw them.
 
-Matches SDK `0.4.0` (`zehn_intelligence`, `main`) and the backend's answer,
+Matches SDK `0.5.0` (`zehn_intelligence`, `main`) and the backend's answer,
 `CARDS_FOR_MOBILE.md` (branch `feat/proxy-sdk`). Related documents:
 
 - `docs/MOBILE_INTEGRATION.md`: the turn protocol (`/v1/turns`, SSE events, tool results).
@@ -28,7 +28,7 @@ assistant shows inside the chat. The customer app has **no code** for it:
 ```
 Console ──(templates, theme)──► Backend (stores and caches them)
                                    │
-   app starts, chat opens ───────► │ ──GET /v1/config → {theme, copy, services, …}──► SDK
+   app starts, chat opens ───────► │ ──GET /v1/config → {theme, copy, …}──────────► SDK
    model wants a card ───────────► │ ──SSE: mount_component {component, props, surface}──► SDK draws it
    model wants a write ──────────► │ ──SSE: confirm {action_id, surface, props}──► SDK asks the user
 ```
@@ -127,9 +127,12 @@ event: confirm
 data: {"turn_id":"…","seq":7,"call_id":"c2","action_id":"6f1d…","tool":"parking.reserve","method":"POST","surface":{"createSurface":{…}},"props":{"zone_id":12,"rows":[{"label":"Zone","value":"B1"}]},"confirm_label":"Reserve","expires_in":600}
 ```
 
-- The SDK draws `surface` with `props` like any card, then adds **Cancel** and **Confirm** under
-  it. Confirm's word is `confirm_label`, else the SDK's own; for `DELETE` it is in a warning
-  colour. Without a `surface` the SDK shows its own "Confirm this?".
+- The SDK draws one card: a frame (`surface` background, 1 px `border`, radius `card`, padding 16)
+  around the template drawn with `props` and, 16 below it, **Cancel** and **Confirm** side by
+  side. So a confirm template has no framing root `Box` of its own. Confirm's word is
+  `confirm_label`, else the SDK's own; for `DELETE` it is in a warning colour. Without a
+  `surface` the SDK shows its own "Confirm this?". After the tap a status line takes the
+  buttons' place.
 - One tap answers the card. It is a new turn:
   `"input": {"type": "action", "action_id": "…", "decision": "confirm" | "cancel"}`.
 - After Confirm the server sends the write as a `client_api_request` carrying that
@@ -145,12 +148,10 @@ The SDK asks for it in the background at start-up and again each time the chat o
 
 ```json
 {
-  "spec_version": "1.2.0",
   "assistant_name": "Mall guide",
   "app_name": "Tashkent City Mall",
   "languages": ["uz", "ru", "en"],
   "default_language": "uz",
-  "services": ["llm", "stt"],
   "theme": { "...": "see section 9" },
   "copy": {
     "welcome_title": { "uz": "Qanday yordam bera olaman?", "ru": "Чем могу помочь?", "en": "How can I help you?" },
@@ -164,12 +165,11 @@ The SDK asks for it in the background at start-up and again each time the chat o
 | `theme` | Section 9. Used by the chat and by every card. |
 | `copy.welcome_title`, `copy.welcome_subtitle` | The chat's first screen (section 10). |
 | `assistant_name` | The chat's title. |
-| `services` | `stt` shows the mic, `tts` asks for spoken replies. |
 | `languages`, `default_language` | Which languages the assistant speaks; the SDK picks the phone's language if it is listed, else the default. |
 
-Every field is optional: a missing one uses the SDK's own default (no mic, the SDK's colours and
-words). `404 spec_not_found` hides the assistant button. The SDK never sends
-`X-ZI-Spec-Version` back.
+Every field is optional: a missing one uses the SDK's own default (the SDK's colours and
+words). The mic is always shown and every answer is spoken. `404 spec_not_found` hides the
+assistant button. The SDK never sends or reads a spec version.
 
 ---
 
@@ -213,6 +213,23 @@ accepts one of these forms:
 | Language map | `{ "uz": "Chipta", "ru": "Билет", "en": "Ticket" }` | Picks the user's language, then `en`, then the first value. Keys may only be `uz`, `ru`, `en`. |
 | Placeholder string | `"Floor {/floor}"` | `{…}` is replaced by the value at that path. No spaces inside the braces. |
 | Language map with placeholders | `{ "uz": "{/floor}-qavat", "en": "Floor {/floor}" }` | Both together. |
+| Placeholder with a format | `"{/start\|time} – {/end\|time}"`, `"{/price\|money:UZS}/soat"` | The value at the path, drawn in that format (below). |
+| Data path with a format | `{ "path": "/price", "format": "money:UZS" }` | The same, for a whole value. |
+
+**Formats** draw a value in the user's language:
+
+| Format | Input | uz | ru | en |
+|---|---|---|---|---|
+| `time` | ISO 8601 (or `12:30:00`) | 12:30 | 12:30 | 12:30 |
+| `date` | ISO 8601 | 10-noyabr | 10 ноября | Nov 10 |
+| `datetime` | ISO 8601 | 10-noyabr, 12:30 | 10 ноября, 12:30 | Nov 10, 12:30 |
+| `number` | number or numeric string | 10 000 | 10 000 | 10,000 |
+| `money:<CODE>` | same | 10 000 UZS | 10 000 UZS | 10,000 UZS |
+| `duration` | minutes | 1 soat 30 daqiqa | 1 ч 30 мин | 1 h 30 min |
+
+A time with a zone shows in the phone's local time; one without, as written. A value that
+doesn't parse, and an unknown format, show the raw value. The spaces inside a number and before
+a currency code don't break a line.
 
 **Localized data is picked automatically.** If a path points at an object whose keys are only
 `uz`/`ru`/`en` (such as `"description": {"uz": "…", "ru": "…", "en": "…"}` from the customer's
@@ -274,8 +291,15 @@ The blocks:
 | `Divider` | — | A 1px line in `border` colour. |
 
 **Icons** (`icon`) are a fixed list: `theaters`, `layers`, `schedule`, `phone`, `language`,
-`movie`, `ticket`, `map`, `parking`, `star`, `info`. With an unknown name, `Header` and `InfoRow`
+`movie`, `ticket`, `map`, `parking`, `star`, `info`, and since 0.5.0 `car`, `store`, `calendar`,
+`wallet`, `person`, `restaurant`, `bus`, `gift`. With an unknown name, `Header` and `InfoRow`
 show a neutral default icon, and `Chip` and `Button` show none. New icons need an SDK release.
+
+**The catalog file.** `catalog/zehn.basic.json` in the SDK repo lists every block (with its
+properties and a line on when to use it), icon, action, text style, colour and radius token,
+and format this SDK draws, with its `sdk_version`. The analyzer reads it at the commit an app's
+`pubspec.lock` names. A test fails when the file and the renderer disagree. A type in
+`props` is a name (`value`, `number`, `color`, …) or a list of the allowed words.
 
 **Colours** (`color`, `border`) are a theme token name (`"surface"`, `"muted"`, …, section 9) or a
 literal `"#RRGGBB"` / `"#AARRGGBB"`. Prefer tokens, so a theme change restyles every card.
@@ -487,7 +511,7 @@ The SDK repository has a mock console that plays the backend for an app descript
 dart run zehn_intelligence:mock_server --app path/to/app.json
 ```
 
-- Put the app's `api`, `tools`, `components`, `theme`, `copy` and `services` in the file (TCM's
+- Put the app's `api`, `tools`, `components`, `theme` and `copy` in the file (TCM's
   is at `tcm_mobile-new-backend/zehn_test/bootstrap.json`). The mock serves `GET /v1/config`,
   sends each card's `surface` in `mount_component`, each tool's built request in
   `client_api_request.request`, fills routes, and asks before writes with a `confirm` card, as

@@ -4,10 +4,8 @@ import 'package:zehn_intelligence/src/server/chat/chat_settings.dart';
 void main() {
   test('reads GET /v1/config', () {
     final s = ZiChatSettings.fromJson({
-      'spec_version': '1.2.0',
       'assistant_name': 'Mall guide',
       'app_name': 'Tashkent City Mall',
-      'services': ['llm', 'stt', 'tts'],
       'languages': ['uz', 'ru'],
       'default_language': 'uz',
       'theme': {'font': 'CeraPro'},
@@ -16,14 +14,11 @@ void main() {
         'welcome_subtitle': 'Find stores.',
       },
     });
-    expect(s.services, {'llm', 'stt', 'tts'});
     expect(s.languages, ['uz', 'ru']);
     expect(s.defaultLanguage, 'uz');
     expect(s.theme, {'font': 'CeraPro'});
     expect(s.assistantName, 'Mall guide');
     expect(s.appName, 'Tashkent City Mall');
-    expect(s.speech, isTrue);
-    expect(s.voiceReply, isTrue);
     expect(s.welcomeTitle('ru'), 'Привет!');
     expect(s.welcomeSubtitle('ru'), 'Find stores.');
   });
@@ -41,19 +36,16 @@ void main() {
       null,
       'nope',
       <String, Object?>{},
-      {'services': 'stt', 'languages': 3, 'theme': [], 'copy': <String, Object?>{}, 'assistant_name': ''},
+      {'languages': 3, 'theme': [], 'copy': <String, Object?>{}, 'assistant_name': ''},
       {'copy': {'welcome_title': '', 'welcome_subtitle': 7}},
     ]) {
       final s = ZiChatSettings.fromJson(json);
-      expect(s.services, isEmpty, reason: '$json');
-      expect(s.languages, isEmpty);
+      expect(s.languages, isEmpty, reason: '$json');
       expect(s.defaultLanguage, isNull);
       expect(s.theme, isEmpty);
       expect(s.assistantName, isNull);
       expect(s.welcomeTitle('en'), isNull);
       expect(s.welcomeSubtitle('en'), isNull);
-      expect(s.speech, isFalse);
-      expect(s.voiceReply, isFalse);
     }
   });
 }

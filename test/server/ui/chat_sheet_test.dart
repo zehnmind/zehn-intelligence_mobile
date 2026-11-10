@@ -19,7 +19,7 @@ import '../../support/history_fakes.dart';
 
 typedef ComponentBuilder = Widget Function(BuildContext, Map<String, Object?>, ZiComponentController);
 
-const voice = ZiChatSettings(services: {'llm', 'stt', 'tts'});
+const voice = ZiChatSettings();
 
 /// A confirm template, read with the card's props.
 const reserveCard = <String, Object?>{
@@ -172,11 +172,10 @@ void main() {
 
   testWidgets('settings that arrive while the chat is open are used at once', (tester) async {
     final settings = await open(tester, settings: const ZiChatSettings());
-    expect(find.text('Tap to speak'), findsNothing);
-    settings.value = const ZiChatSettings(services: {'stt'}, welcomeTitle: 'Welcome to the mall');
+    expect(find.text('Welcome to the mall'), findsNothing);
+    settings.value = const ZiChatSettings(welcomeTitle: 'Welcome to the mall');
     await tester.pumpAndSettle();
     expect(find.text('Welcome to the mall'), findsOneWidget);
-    expect(find.text('Tap to speak'), findsOneWidget);
   });
 
   testWidgets('a suggestion chip sends its text and shows the conversation', (tester) async {
@@ -322,16 +321,20 @@ void main() {
     expect(find.text('How can I help you?'), findsOneWidget);
   });
 
-  testWidgets('without stt there is no mic, and the orb opens typing', (tester) async {
-    await open(tester, settings: const ZiChatSettings(services: {'llm'}));
-    expect(find.text('Tap to speak'), findsNothing);
+  testWidgets('the mic is always there: the config names no services', (tester) async {
+    await open(tester, settings: const ZiChatSettings());
+    expect(find.text('Tap to speak'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('zi-orb')));
     await tester.pumpAndSettle();
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.byKey(const ValueKey('zi-mic')), findsNothing);
+    expect(recorder.starts, 1);
+    await tester.tap(find.byKey(const ValueKey('zi-cancel')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Type a message'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('zi-mic')), findsOneWidget);
   });
 
-  testWidgets('with stt the orb listens, and stop sends the recording', (tester) async {
+  testWidgets('the orb listens, and stop sends the recording', (tester) async {
     turns.script([started, done]);
     await open(tester);
     await tester.tap(find.byKey(const ValueKey('zi-orb')));
@@ -417,6 +420,113 @@ void main() {
     expect(find.text('Confirmed'), findsOneWidget);
     expect(find.byKey(const ValueKey('zi-confirm')), findsNothing);
     expect(find.textContaining('place reserved', findRichText: true), findsOneWidget);
+  });
+
+  testWidgets('a confirm card is one frame: the template and its buttons inside, in the theme', (tester) async {
+    turns.script([started, reserve(), done]);
+    await open(tester, settings: const ZiChatSettings(theme: {
+      'colors': {
+        'surface': '#F7F7F7',
+        'border': '#DDDDDD',
+        'chip': '#EEEEEE',
+        'on_surface': '#111111',
+        'accent': '#FF6600',
+        'on_accent': '#FFFFFF',
+      },
+      'radius': {'card': 24},
+    }));
+    await type(tester, 'reserve');
+    final card = find.byKey(const ValueKey('zi-confirm-card'));
+    final frame = tester.widget<Container>(card);
+    final look = frame.decoration! as BoxDecoration;
+    expect(look.color, const Color(0xFFF7F7F7));
+    expect(look.border, Border.all(color: const Color(0xFFDDDDDD)));
+    expect(look.borderRadius, BorderRadius.circular(24));
+    expect(frame.padding, const EdgeInsets.all(16));
+    for (final inside in [find.text('Reserve zone B1?'), find.byKey(const ValueKey('zi-decline')), find.byKey(const ValueKey('zi-confirm'))]) {
+      expect(find.descendant(of: card, matching: inside), findsOneWidget);
+    }
+    Container fill(String key) => tester.widget<Container>(
+      find.descendant(of: find.byKey(ValueKey(key)), matching: find.byType(Container)).first,
+    );
+    expect((fill('zi-decline').decoration! as BoxDecoration).color, const Color(0xFFEEEEEE));
+    expect(tester.widget<Text>(find.text('Cancel')).style?.color, const Color(0xFF111111));
+    expect((fill('zi-confirm').decoration! as BoxDecoration).color, const Color(0xFFFF6600));
+    final cancel = tester.getRect(find.byKey(const ValueKey('zi-decline')));
+    final confirm = tester.getRect(find.byKey(const ValueKey('zi-confirm')));
+    expect(cancel.height, 44);
+    expect(cancel.width, confirm.width);
+    expect(confirm.left - cancel.right, 8);
+    expect(confirm.top - tester.getRect(find.text('Reserve zone B1?')).bottom, 16);
+    turns.script([done]);
+    await tester.tap(find.byKey(const ValueKey('zi-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: card, matching: find.text('Confirmed')), findsOneWidget);
+  });
+
+  testWidgets('a spoken answer has one speaker, under its last part: tap plays it again, tap again stops', (tester) async {
+    AudioClip clip(int seq) => AudioClip(format: 'mp3', text: '', data: 'c$seq', turnId: 't1', seq: seq);
+    turns.script([
+      started,
+      const TextDelta(text: 'Part one', turnId: 't1'),
+      const MountComponent(callId: 'c1', component: 'cinema', kind: 'inline', props: {'name': 'Cinematica'}, surface: cinemaCard, turnId: 't1'),
+      const TextDelta(text: 'Part two', turnId: 't1'),
+      clip(1),
+      clip(2),
+      done,
+    ]);
+    await open(tester);
+    await type(tester, 'cinema');
+    final speaker = find.byKey(const ValueKey('zi-speak-t1'));
+    expect(speaker, findsOneWidget);
+    expect(tester.getRect(speaker).top, greaterThanOrEqualTo(tester.getRect(find.textContaining('Part two', findRichText: true)).bottom));
+    // The chat (and its playback listener) was made in setUp, outside the
+    // test's fake clock: the end of playback is delivered in real time.
+    await tester.runAsync(() async {
+      audio.finish();
+      await pumpEventQueue();
+    });
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: speaker, matching: find.byIcon(Icons.volume_up_outlined)), findsOneWidget);
+    audio.clips.clear();
+    await tester.tap(speaker);
+    await tester.pumpAndSettle();
+    expect(audio.clips, [(1, 'c1', 'mp3'), (2, 'c2', 'mp3')]);
+    expect(find.descendant(of: speaker, matching: find.byIcon(Icons.stop_rounded)), findsOneWidget);
+    final stops = audio.stops;
+    await tester.tap(speaker);
+    await tester.pumpAndSettle();
+    expect(audio.stops, stops + 1);
+    expect(find.descendant(of: speaker, matching: find.byIcon(Icons.volume_up_outlined)), findsOneWidget);
+  });
+
+  testWidgets("a long answer's speaker stays in view above the follow-up chips", (tester) async {
+    // Events come over several frames, as from the server.
+    final leg = StreamController<TurnEvent>();
+    turns.legs.add(leg.stream);
+    await open(tester);
+    await type(tester, 'long');
+    leg
+      ..add(started)
+      ..add(TextDelta(text: List.filled(30, 'A line of the answer.').join('\n\n'), turnId: 't1'));
+    await tester.pumpAndSettle();
+    leg.add(const AudioClip(format: 'mp3', text: '', data: 'c1', turnId: 't1', seq: 1));
+    await tester.pumpAndSettle();
+    leg
+      ..add(const SuggestionsEvent(items: ['Tell me more'], turnId: 't1'))
+      ..add(done);
+    await leg.close();
+    await tester.pumpAndSettle();
+    final speaker = tester.getRect(find.byKey(const ValueKey('zi-speak-t1')));
+    expect(speaker.bottom, lessThanOrEqualTo(tester.getRect(find.text('Tell me more')).top));
+  });
+
+  testWidgets('an answer with no speech held has no speaker', (tester) async {
+    turns.script([started, const TextDelta(text: 'Quiet answer', turnId: 't1'), done]);
+    await open(tester);
+    await type(tester, 'hi');
+    expect(find.textContaining('Quiet answer', findRichText: true), findsOneWidget);
+    expect(find.byKey(const ValueKey('zi-speak-t1')), findsNothing);
   });
 
   testWidgets('Cancel sends the cancel decision', (tester) async {
