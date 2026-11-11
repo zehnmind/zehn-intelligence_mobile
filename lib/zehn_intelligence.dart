@@ -38,7 +38,7 @@ export 'src/core/transport/rule_based_transport.dart';
 export 'src/core/transport/zehn.dart';
 export 'src/server/api/api_client.dart' show ZiApiException;
 export 'src/server/surface/surface.dart' show ZiSurface, ZiTheme;
-export 'src/server/surface/surface_view.dart' show ZiSurfaceView, ZiSurfaceAction;
+export 'src/server/surface/surface_view.dart' show ZiIconBuilder, ZiSurfaceView, ZiSurfaceAction;
 export 'src/ui/chat/agent_chat_bloc.dart';
 export 'src/ui/components/agent_component.dart';
 export 'src/ui/components/agent_component_registry.dart';

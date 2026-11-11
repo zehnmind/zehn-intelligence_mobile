@@ -32,7 +32,10 @@ void main() {
   });
 
   test('every block says when to use it, and every property has a known type', () {
-    const types = {'string', 'value', 'number', 'bool', 'id', 'children', 'action', 'text_style', 'color', 'radius', 'icon'};
+    const types = {
+      'string', 'value', 'number', 'bool', 'id', 'children', 'action', 'text_style', 'color', 'radius', 'icon',
+      'icon_name', 'insets', 'shadow', 'spans', //
+    };
     bool known(Object? type) => type is List ? type.every((x) => x is String) && type.isNotEmpty : types.contains(type);
     for (final MapEntry(key: name, value: block) in blocks.entries) {
       expect(block['about'], isA<String>().having((s) => s.length, 'length', greaterThan(10)), reason: name);

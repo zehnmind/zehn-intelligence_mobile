@@ -252,6 +252,14 @@ A path that leads nowhere shows as empty text, not an error.
 Inside the repeated block, paths **without** a leading `/` (`"image"`, `"title"`) read the current
 list item. Paths with `/` still read from the top of `props`.
 
+`children` can also carry a `separator`, a block drawn **between** two repeats (a divider, a space),
+never before the first or after the last, and not next to a repeat that `visible` hides:
+
+```json
+{ "id": "rates", "component": "Column", "children": { "componentId": "rate", "path": "rates", "separator": "line" } },
+{ "id": "line",  "component": "Divider", "padding": { "y": 7.5 } }
+```
+
 ### 6.4 Hiding a block: `visible`
 
 ```json
@@ -273,27 +281,79 @@ Properties every block accepts:
 | `visible` | value | Section 6.4. |
 | `width`, `height` | number | Fixed size in logical pixels. |
 | `flex` | number | Shares the free width with sibling blocks. **Use only on children of a non-scrolling `Row`.** |
+| `padding` | number or object | Space inside the block (section 7.1). |
 | `action` | object | Makes the block tappable (section 8). `Header`, `InfoRow` and `Button` show their own tap feedback. |
 
 The blocks:
 
 | Block | Properties | Draws |
 |---|---|---|
-| `Box` | `child` (id), `color` (colour), `radius` (radius), `padding` (number), `border` (colour) | A container. Use it as the card's root, with `color: "surface"`. |
-| `Column` | `children`, `gap` (number), `align` (`start`·`center`·`end`·`stretch`, default `start`) | Blocks stacked top to bottom. |
-| `Row` | `children`, `gap`, `align` (default `center`; `start` when scrolling), `scroll` (bool) | Blocks left to right. `scroll: true` scrolls sideways (carousels). |
-| `Image` | `src` (value: an `https://` URL; `http://` also loads but avoid it), `width`, `height`, `radius` | A network image, cropped to fill. Full width unless `width` is set. Any other scheme shows a placeholder icon. |
-| `Text` | `text` (value), `style` (text style), `color` (colour, default `on_surface`), `maxLines` (number) | Text. Cut with "…" after `maxLines`. |
+| `Box` | `child` (id), `color` (colour), `radius` (radius), `border` (colour), `shadow`, `alignment` | A container; `padding` is inside its background. Use it as the card's root, with `color: "surface"`. |
+| `Column` | `children`, `gap` (number), `align` (`start`·`center`·`end`·`stretch`, default `start`), `justify` | Blocks stacked top to bottom. |
+| `Row` | `children`, `gap`, `align` (default `center`; `start` when scrolling), `justify`, `scroll` (bool) | Blocks left to right. `scroll: true` scrolls sideways (carousels). |
+| `Image` | `src` (value: an `https://` URL; `http://` also loads but avoid it), `width`, `height`, `radius`, `fit` | A network image, cropped to fill (or `fit`). Full width unless `width` is set. Any other scheme shows a placeholder icon. |
+| `Text` | `text` (value) or `spans`, `style` (text style), `color` (colour, default `on_surface`), `maxLines` (number), `size`, `weight`, `lineHeight`, `letterSpacing`, `font`, `textAlign` | Text. Cut with "…" after `maxLines`. Section 7.1 for the rest. |
+| `Icon` | `name` (icon), `size` (number), `color` (colour, default `muted`) | One icon. |
 | `Chip` | `text`, `icon`, `color` (background, default `chip`) | A small rounded label (floor, rating, category). |
 | `Header` | `title`, `icon`, `action` | A section title with an icon tile; a chevron when it has an action. |
 | `InfoRow` | `text`, `icon`, `action` | An icon and a line of text with a divider under it (hours, phone, website); a chevron when it has an action. |
 | `Button` | `label`, `icon`, `variant` (`primary` default, or `secondary`), `action` | A full-width 50px button. Primary uses `accent`, secondary uses `chip`. |
 | `Divider` | — | A 1px line in `border` colour. |
 
+### 7.1 Looking like the app's own widgets
+
+The blocks above are small on purpose. These properties let a template match what an app's
+designers drew, in px unless said otherwise. All are optional and added to what is there: a
+template that doesn't use them draws exactly as before, and an SDK that predates them ignores
+the properties (it skips an `Icon` block, as it skips any block it doesn't know).
+
+| Property | On | Meaning |
+|---|---|---|
+| `padding` | every block | Space inside the block's size: a number for every side, or `{"x": 16, "y": 8, "top": 4, "right": 0, "bottom": 0, "left": 12}` (a side beats `x` / `y`; 0 to 200). A `Box` pads inside its background; a sideways `Row` pads its content, so the padding scrolls with it; any other block gets the space around it. |
+| `shadow` | `Box` | One soft shadow: `{"x": 0, "y": 4, "blur": 10, "spread": 0, "color": "#08000000"}` (`color`: a token or `#hex`). |
+| `alignment` | `Box` | Where its child sits inside it: `center`, `top`, `bottom`, `start`, `end`, `top_start`, `top_end`, `bottom_start`, `bottom_end`. |
+| `justify` | `Row`, `Column` | How the children share the main axis: `start`, `center`, `end`, `space_between`, `space_around`, `space_evenly`. A `Column` needs a `height` for it to matter. |
+| `size`, `weight`, `lineHeight`, `letterSpacing`, `font`, `textAlign` | `Text` | Over its `style`, for this text only. `size` 6 to 96 px; `weight` 100 to 900 in hundreds; `lineHeight` a multiple of the size (0.8 to 3); `letterSpacing` in em (`-0.01` is 1% tighter; -0.2 to 0.5); `font` a family the app ships, or `system` for the platform's own; `textAlign` `start`, `center` or `end`. |
+| `spans` | `Text` | Instead of `text`: parts of one line, each `{"text": value, "color": colour, "weight": 100–900}`, so a word can have its own colour. Or a language map of such lists when the order differs by language (`{"uz": [...], "ru": [...], "en": [...]}`). |
+| `fit` | `Image` | `cover` (default, crops), `fill` (stretches) or `contain` (shows it all). |
+| `name`, `size`, `color` | `Icon` | An icon (the list above, or the app's own) at a size (8 to 96, default 24) and colour (default `muted`). A name nobody knows keeps its room and draws nothing. |
+
+A `Divider` takes `padding` too, to give it room: `{"component": "Divider", "padding": {"y": 15.5}}`.
+A text style in the theme may also carry `letterSpacing` (em), so every text of that style gets it (§9).
+
+**The app's own icons.** An app hands the SDK its own icons by name, and templates use them like
+the built-in ones (`icon` on a `Chip`, `Header`, `InfoRow` or `Button`, or an `Icon` block):
+
+```dart
+ZehnIntelligence.registerIcon('cinema', (context, size, color) =>
+    SvgPicture.asset('assets/cinema.svg', width: size, height: size, colorFilter: ColorFilter.mode(color, BlendMode.srcIn)));
+```
+
+A name is `lower_snake_case` (2 to 32 characters). A registered name beats a built-in of the same
+name, so an app can give `forward` its own chevron. The console accepts any such name, so a typo
+(`schedul`) is not caught there: it draws nothing.
+
+**Example: a store card in an app's own look** (a white card with a hairline border and a faint
+shadow, a 64 px logo tile, the name and a floor chip, the app's chevron):
+
+```json
+{ "id": "root", "component": "Box", "color": "#FFFFFFFF", "radius": 20, "padding": 8, "border": "border",
+  "shadow": { "y": 4, "blur": 10, "color": "#08000000" }, "child": "row",
+  "action": { "name": "open_route", "args": { "route": { "path": "/route" } } } },
+{ "id": "row", "component": "Row", "children": ["logo", "mid", "chev"] },
+{ "id": "logo", "component": "Box", "width": 64, "height": 64, "color": "#0819212F", "radius": 16, "alignment": "center", "child": "mark" },
+{ "id": "mark", "component": "Text", "text": { "path": "/mark" }, "font": "system", "size": 24, "weight": 900, "lineHeight": 1 },
+{ "id": "mid", "component": "Column", "flex": 1, "padding": { "left": 12 }, "gap": 4, "children": ["name", "floor"] },
+{ "id": "name", "component": "Text", "style": "title", "text": { "path": "/name" } },
+{ "id": "floor", "component": "Box", "color": "chip", "radius": 100, "padding": { "x": 8, "y": 2 }, "child": "floor_t" },
+{ "id": "floor_t", "component": "Text", "style": "caption", "weight": 500, "color": "muted", "text": { "path": "/floor" } },
+{ "id": "chev", "component": "Icon", "name": "forward", "size": 24, "color": "muted", "padding": { "right": 4 } }
+```
+
 **Icons** (`icon`) are a fixed list: `theaters`, `layers`, `schedule`, `phone`, `language`,
 `movie`, `ticket`, `map`, `parking`, `star`, `info`, and since 0.5.0 `car`, `store`, `calendar`,
-`wallet`, `person`, `restaurant`, `bus`, `gift`. With an unknown name, `Header` and `InfoRow`
-show a neutral default icon, and `Chip` and `Button` show none. New icons need an SDK release.
+`wallet`, `person`, `restaurant`, `bus`, `gift`, and `forward` (a chevron). With an unknown name, `Header` and `InfoRow`
+show a neutral default icon, and `Chip` and `Button` show none. A new built-in icon needs an SDK release; an app can also register its own (section 7.1).
 
 **The catalog file.** `catalog/zehn.basic.json` in the SDK repo lists every block (with its
 properties and a line on when to use it), icon, action, text style, colour and radius token,
@@ -371,7 +431,7 @@ the chat itself both read it.
 | `colors.image_bg` | Behind images while they load. |
 | `colors.border` | `InfoRow` and `Divider` lines. |
 | `colors.accent`, `colors.on_accent` | Primary buttons, and the chat's send button and links. |
-| `text.*` | `size` (px), `weight` (100–900), `height` (line height as a multiple). |
+| `text.*` | `size` (px), `weight` (100–900), `height` (line height as a multiple), and optionally `letterSpacing` (em, e.g. `-0.01`). |
 | `radius.*` | Corner radii in px. `chip` and `button` are used by those blocks. |
 
 Send **all** colour tokens. The SDK's built-in fallbacks are meant for dark cards, so a missing
@@ -393,7 +453,7 @@ the SDK's own neutral text.
 The SDK never crashes on a bad template; it just draws less. Catch problems in the console instead:
 
 1. `createSurface.components` is a list; every item has a unique string `id` and a `component`.
-2. `component` is one of the 10 blocks in section 7.
+2. `component` is one of the 11 blocks in section 7.
 3. `root` exists; every `child` / `children` id exists; no cycles; depth ≤ 32.
 4. `icon` values are from the icon list; `style` is a text token; colours are tokens or `#hex`.
 5. `action.name` is `open_route` / `ask` / `open_url`, with the matching argument.
@@ -580,14 +640,14 @@ the customer's API; the SDK picks the user's language.
     },
     "color": { "type": "string", "pattern": "^(#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|[a-z_]+)$" },
     "radius": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string", "pattern": "^[a-z_]+$" }] },
-    "icon": { "enum": ["theaters", "layers", "schedule", "phone", "language", "movie", "ticket", "map", "parking", "star", "info"] },
+    "icon": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
     "children": {
       "oneOf": [
         { "type": "array", "items": { "type": "string" } },
         {
           "type": "object",
           "required": ["componentId", "path"],
-          "properties": { "componentId": { "type": "string" }, "path": { "type": "string" } }
+          "properties": { "componentId": { "type": "string" }, "path": { "type": "string" }, "separator": { "type": "string" } }
         }
       ]
     },
@@ -609,7 +669,7 @@ the customer's API; the SDK picks the user's language.
       "required": ["id", "component"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "component": { "enum": ["Box", "Column", "Row", "Image", "Text", "Chip", "Header", "InfoRow", "Button", "Divider"] },
+        "component": { "enum": ["Box", "Column", "Row", "Image", "Text", "Icon", "Chip", "Header", "InfoRow", "Button", "Divider"] },
         "visible": { "$ref": "#/$defs/value" },
         "width": { "type": "number", "minimum": 0 },
         "height": { "type": "number", "minimum": 0 },
@@ -620,7 +680,28 @@ the customer's API; the SDK picks the user's language.
         "color": { "$ref": "#/$defs/color" },
         "border": { "$ref": "#/$defs/color" },
         "radius": { "$ref": "#/$defs/radius" },
-        "padding": { "type": "number", "minimum": 0 },
+        "padding": {
+          "oneOf": [
+            { "type": "number", "minimum": 0, "maximum": 200 },
+            { "type": "object", "additionalProperties": false,
+              "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "top": { "type": "number" },
+                              "right": { "type": "number" }, "bottom": { "type": "number" }, "left": { "type": "number" } } }
+          ]
+        },
+        "shadow": { "type": "object", "additionalProperties": false,
+                    "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "blur": { "type": "number", "minimum": 0 },
+                                    "spread": { "type": "number" }, "color": { "$ref": "#/$defs/color" } } },
+        "alignment": { "enum": ["center", "top", "bottom", "start", "end", "top_start", "top_end", "bottom_start", "bottom_end"] },
+        "justify": { "enum": ["start", "center", "end", "space_between", "space_around", "space_evenly"] },
+        "fit": { "enum": ["cover", "fill", "contain"] },
+        "spans": { "type": ["array", "object"] },
+        "size": { "type": "number", "minimum": 6, "maximum": 96 },
+        "weight": { "type": "integer", "minimum": 100, "maximum": 900, "multipleOf": 100 },
+        "lineHeight": { "type": "number", "minimum": 0.8, "maximum": 3 },
+        "letterSpacing": { "type": "number", "minimum": -0.2, "maximum": 0.5 },
+        "font": { "type": "string", "pattern": "^[A-Za-z0-9 _-]{1,64}$" },
+        "textAlign": { "enum": ["start", "center", "end"] },
+        "name": { "$ref": "#/$defs/icon" },
         "gap": { "type": "number", "minimum": 0 },
         "align": { "enum": ["start", "center", "end", "stretch"] },
         "scroll": { "type": "boolean" },

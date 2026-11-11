@@ -54,16 +54,37 @@ class ZiTheme {
     return parseColor(value is String ? value : null) ?? fallback;
   }
 
-  TextStyle text(Object? token, {Color? color}) {
+  /// The text style [token] names (`display`, `title`, `body`, `caption`), with a block's own
+  /// overrides on top: `size` (px), `weight` (100–900), `lineHeight` (a multiple of the size),
+  /// `letterSpacing` (in em) and `font` (a family the app ships, or `system` for the platform's
+  /// own). Every number is held to a sane range, so a template can't ask for a 10 000 px letter.
+  TextStyle text(
+    Object? token, {
+    Color? color,
+    double? size,
+    int? weight,
+    double? lineHeight,
+    double? letterSpacing,
+    String? font,
+  }) {
     final styles = json['text'];
     final picked = styles is Map ? (styles[token ?? 'body'] ?? styles['body']) : null;
     final s = picked is Map ? picked : const <String, Object?>{};
-    final weight = s['weight'] is num ? (s['weight'] as num).toInt() : 400;
+    double? own(String key) => s[key] is num ? (s[key] as num).toDouble() : null;
+    final fontSize = (size ?? own('size') ?? 15).clamp(6.0, 96.0).toDouble();
+    final w = (weight ?? own('weight')?.toInt() ?? 400).clamp(100, 900).toInt();
+    final height = lineHeight ?? own('height');
+    final tracking = letterSpacing ?? own('letterSpacing');
     return TextStyle(
-      fontFamily: font,
-      fontSize: s['size'] is num ? (s['size'] as num).toDouble() : 15,
-      fontWeight: FontWeight.values[(weight ~/ 100 - 1).clamp(0, 8)],
-      height: s['height'] is num ? (s['height'] as num).toDouble() : null,
+      fontFamily: switch (font) {
+        null => this.font,
+        'system' => null,
+        _ => font,
+      },
+      fontSize: fontSize,
+      fontWeight: FontWeight.values[(w ~/ 100 - 1).clamp(0, 8)],
+      height: height?.clamp(0.8, 3.0).toDouble(),
+      letterSpacing: tracking == null ? null : tracking.clamp(-0.2, 0.5).toDouble() * fontSize,
       color: color,
     );
   }

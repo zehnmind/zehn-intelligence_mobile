@@ -31,6 +31,7 @@ import '../core/transport/zehn.dart';
 import '../server/api/client_info.dart';
 import '../server/app_file.dart';
 import '../server/app_route.dart';
+import '../server/surface/surface_view.dart' show ZiIconBuilder, ziCustomIcons;
 import '../server/runtime.dart';
 import '../server/ui/assistant_overlay.dart';
 import '../version.dart';
@@ -189,6 +190,14 @@ class ZehnIntelligence {
     Widget Function(BuildContext, Map<String, Object?>, ZiComponentController) builder,
   ) {
     registeredComponents[name] = builder;
+  }
+
+  /// Registers one of the app's own icons for dynamic cards: a template draws it with
+  /// `{"component": "Icon", "name": "<name>"}` (or any block's `icon`). The builder gets the
+  /// size and colour the template asked for. A name that is also a built-in icon replaces it.
+  static void registerIcon(String name, ZiIconBuilder builder) {
+    assert(RegExp(r'^[a-z][a-z0-9_]{1,31}$').hasMatch(name), 'An icon name is lower_snake_case: "$name"');
+    ziCustomIcons[name] = builder;
   }
 
   /// Starts the assistant. The only call an app needs, in `main()`:

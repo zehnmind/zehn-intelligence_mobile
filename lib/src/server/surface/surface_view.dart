@@ -8,7 +8,7 @@ import 'surface.dart';
 const ziAllowedActions = {'open_route', 'ask', 'open_url'};
 
 /// Catalog `zehn.basic.v0`: what this build can draw.
-const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider'};
+const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider'};
 
 const _languages = {'uz', 'ru', 'en'};
 
@@ -33,7 +33,15 @@ const ziIcons = <String, IconData>{
   'restaurant': Icons.restaurant,
   'bus': Icons.directions_bus_outlined,
   'gift': Icons.card_giftcard,
+  'forward': Icons.chevron_right,
 };
+
+/// Draws one of the app's own icons: its [size] and [color] come from the template.
+typedef ZiIconBuilder = Widget Function(BuildContext context, double size, Color color);
+
+/// The app's own icons by name (`ZehnIntelligence.registerIcon`). A name here beats a built-in
+/// of the same name, so an app can give `forward` its own chevron.
+final Map<String, ZiIconBuilder> ziCustomIcons = {};
 
 /// A tap the template asked for, with its arguments resolved.
 class ZiSurfaceAction {
@@ -121,6 +129,86 @@ class _Builder {
 
   double? number(Object? value) => value is num ? value.toDouble() : null;
 
+  /// Space around or inside a block: one number for every side, or
+  /// `{"x": 16, "y": 8, "top": 4, "right": …, "bottom": …, "left": …}` (a side beats x / y).
+  EdgeInsets insets(Object? value) {
+    if (value is num) return EdgeInsets.all(_space(value));
+    if (value is! Map) return EdgeInsets.zero;
+    double side(String key, String axis) => _space(value[key] ?? value[axis]);
+    return EdgeInsets.fromLTRB(side('left', 'x'), side('top', 'y'), side('right', 'x'), side('bottom', 'y'));
+  }
+
+  double _space(Object? value) => value is num ? value.toDouble().clamp(0.0, 1000.0) : 0;
+
+  AlignmentGeometry? _alignment(Object? value) => switch (value) {
+    'center' => AlignmentDirectional.center,
+    'top' => AlignmentDirectional.topCenter,
+    'bottom' => AlignmentDirectional.bottomCenter,
+    'start' => AlignmentDirectional.centerStart,
+    'end' => AlignmentDirectional.centerEnd,
+    'top_start' => AlignmentDirectional.topStart,
+    'top_end' => AlignmentDirectional.topEnd,
+    'bottom_start' => AlignmentDirectional.bottomStart,
+    'bottom_end' => AlignmentDirectional.bottomEnd,
+    _ => null,
+  };
+
+  MainAxisAlignment _main(Object? value) => switch (value) {
+    'center' => MainAxisAlignment.center,
+    'end' => MainAxisAlignment.end,
+    'space_between' => MainAxisAlignment.spaceBetween,
+    'space_around' => MainAxisAlignment.spaceAround,
+    'space_evenly' => MainAxisAlignment.spaceEvenly,
+    _ => MainAxisAlignment.start,
+  };
+
+  TextAlign? _textAlign(Object? value) => switch (value) {
+    'center' => TextAlign.center,
+    'end' => TextAlign.end,
+    'start' => TextAlign.start,
+    _ => null,
+  };
+
+  /// `{"x": 0, "y": 4, "blur": 10, "spread": 0, "color": "#08000000"}`: one soft shadow.
+  List<BoxShadow>? _shadow(Object? value) {
+    if (value is! Map) return null;
+    double n(String key) => value[key] is num ? (value[key] as num).toDouble().clamp(-100.0, 100.0) : 0;
+    return [
+      BoxShadow(
+        color: t.color(value['color'], const Color(0x1F000000)),
+        offset: Offset(n('x'), n('y')),
+        blurRadius: n('blur').clamp(0.0, 100.0),
+        spreadRadius: n('spread'),
+      ),
+    ];
+  }
+
+  // ---- icons ---------------------------------------------------------------
+
+  /// An icon of the app's own, else a built-in one; null for a name nobody knows.
+  Widget? glyph(Object? name, double size, Color color) {
+    final custom = ziCustomIcons[name];
+    if (custom != null) return Builder(builder: (context) => custom(context, size, color));
+    final data = ziIcons[name];
+    return data == null ? null : Icon(data, size: size, color: color);
+  }
+
+  // ---- text ----------------------------------------------------------------
+
+  FontWeight _weight(num w) => FontWeight.values[((w.toInt().clamp(100, 900)) ~/ 100 - 1).clamp(0, 8)];
+
+  /// The block's text style (`style`), with its own `size`, `weight`, `lineHeight`, `letterSpacing`
+  /// and `font` on top.
+  TextStyle _textStyle(Map<String, Object?> s, Color color) => t.text(
+    s['style'],
+    color: color,
+    size: number(s['size']),
+    weight: s['weight'] is num ? (s['weight'] as num).toInt() : null,
+    lineHeight: number(s['lineHeight']),
+    letterSpacing: number(s['letterSpacing']),
+    font: s['font'] is String ? s['font'] as String : null,
+  );
+
   // ---- actions -------------------------------------------------------------
 
   VoidCallback? action(Map<String, Object?> spec, Object? item) {
@@ -169,18 +257,21 @@ class _Builder {
       case 'Box':
         final child = s['child'] is String ? build(s['child'] as String, item, depth + 1) : null;
         return Container(
-          padding: EdgeInsets.all(number(s['padding']) ?? 0),
+          padding: insets(s['padding']),
+          alignment: _alignment(s['alignment']),
           clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             color: t.color(s['color'], Colors.transparent),
             borderRadius: BorderRadius.circular(t.radius(s['radius'], 0)),
             border: s['border'] == null ? null : Border.all(color: t.color(s['border'], chip)),
+            boxShadow: _shadow(s['shadow']),
           ),
           child: child,
         );
       case 'Column':
         return Column(
           mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: _main(s['justify']),
           crossAxisAlignment: _cross(s['align'], CrossAxisAlignment.start),
           spacing: number(s['gap']) ?? 0,
           children: _children(s, item, depth, flexible: true),
@@ -189,15 +280,27 @@ class _Builder {
         final scroll = s['scroll'] == true;
         final row = Row(
           mainAxisSize: scroll ? MainAxisSize.min : MainAxisSize.max,
+          mainAxisAlignment: _main(s['justify']),
           crossAxisAlignment: _cross(s['align'], scroll ? CrossAxisAlignment.start : CrossAxisAlignment.center),
           spacing: number(s['gap']) ?? 0,
           children: _children(s, item, depth, flexible: !scroll),
         );
+        // A sideways list pads its own content (the padding scrolls with it), not its frame.
         return scroll
-            ? SingleChildScrollView(scrollDirection: Axis.horizontal, clipBehavior: Clip.none, child: row)
+            ? SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
+                padding: insets(s['padding']),
+                child: row,
+              )
             : row;
       case 'Image':
         final src = text(s['src'], item);
+        final fit = switch (s['fit']) {
+          'fill' => BoxFit.fill,
+          'contain' => BoxFit.contain,
+          _ => BoxFit.cover,
+        };
         return ClipRRect(
           borderRadius: BorderRadius.circular(t.radius(s['radius'], 0)),
           child: Container(
@@ -207,7 +310,7 @@ class _Builder {
             child: src.startsWith('https://') || src.startsWith('http://')
                 ? Image.network(
                     src,
-                    fit: BoxFit.cover,
+                    fit: fit,
                     errorBuilder: (_, _, _) => Icon(Icons.broken_image_outlined, color: muted),
                   )
                 : Icon(Icons.image_outlined, color: muted),
@@ -215,14 +318,37 @@ class _Builder {
         );
       case 'Text':
         final maxLines = s['maxLines'] is num ? (s['maxLines'] as num).toInt() : null;
-        return Text(
-          text(s['text'], item),
-          maxLines: maxLines,
-          overflow: maxLines == null ? null : TextOverflow.ellipsis,
-          style: t.text(s['style'], color: t.color(s['color'], onSurface)),
-        );
+        final style = _textStyle(s, t.color(s['color'], onSurface));
+        final spans = resolve(s['spans'], item);
+        final align = _textAlign(s['textAlign']);
+        final overflow = maxLines == null ? null : TextOverflow.ellipsis;
+        if (spans is List) {
+          return Text.rich(
+            TextSpan(children: [
+              for (final span in spans)
+                if (span is Map)
+                  TextSpan(
+                    text: '${span['text'] ?? ''}',
+                    style: span['color'] == null && span['weight'] == null
+                        ? null
+                        : TextStyle(
+                            color: span['color'] == null ? null : t.color(span['color'], onSurface),
+                            fontWeight: span['weight'] is num ? _weight(span['weight'] as num) : null,
+                          ),
+                  ),
+            ]),
+            maxLines: maxLines,
+            overflow: overflow,
+            textAlign: align,
+            style: style,
+          );
+        }
+        return Text(text(s['text'], item), maxLines: maxLines, overflow: overflow, textAlign: align, style: style);
+      case 'Icon':
+        final size = (number(s['size']) ?? 24).clamp(8.0, 96.0);
+        return glyph(s['name'], size, t.color(s['color'], muted)) ?? SizedBox(width: size, height: size);
       case 'Chip':
-        final icon = ziIcons[s['icon']];
+        final icon = glyph(s['icon'], 14, muted);
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
@@ -230,7 +356,7 @@ class _Builder {
             borderRadius: BorderRadius.circular(t.radius('chip', 100)),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, spacing: 6, children: [
-            if (icon != null) Icon(icon, size: 14, color: muted),
+            ?icon,
             Text(text(s['text'], item), style: t.text('caption', color: muted)),
           ]),
         );
@@ -243,7 +369,7 @@ class _Builder {
               width: 32,
               height: 32,
               decoration: BoxDecoration(color: chip, borderRadius: BorderRadius.circular(10)),
-              child: Icon(ziIcons[s['icon']] ?? Icons.label_outline, size: 18, color: muted),
+              child: glyph(s['icon'], 18, muted) ?? Icon(Icons.label_outline, size: 18, color: muted),
             ),
             Expanded(child: Text(text(s['title'], item), style: t.text('title', color: onSurface))),
             if (tap != null) Icon(Icons.chevron_right, color: muted),
@@ -257,7 +383,7 @@ class _Builder {
             padding: const EdgeInsets.symmetric(vertical: 11),
             decoration: BoxDecoration(border: Border(bottom: BorderSide(color: t.color('border', chip)))),
             child: Row(spacing: 12, children: [
-              Icon(ziIcons[s['icon']] ?? Icons.info_outline, size: 18, color: muted),
+              glyph(s['icon'], 18, muted) ?? Icon(Icons.info_outline, size: 18, color: muted),
               Expanded(child: Text(text(s['text'], item), style: t.text('body', color: onSurface))),
               if (tap != null) Icon(Icons.chevron_right, size: 18, color: muted),
             ]),
@@ -266,7 +392,7 @@ class _Builder {
       case 'Button':
         final secondary = s['variant'] == 'secondary';
         final fg = secondary ? onSurface : t.color('on_accent', Colors.white);
-        final icon = ziIcons[s['icon']];
+        final icon = glyph(s['icon'], 20, fg.withValues(alpha: 0.75));
         return Material(
           color: secondary ? chip : t.color('accent', Colors.orange),
           borderRadius: BorderRadius.circular(t.radius('button', 16)),
@@ -276,7 +402,7 @@ class _Builder {
             child: SizedBox(
               height: 50,
               child: Row(mainAxisAlignment: MainAxisAlignment.center, spacing: 8, children: [
-                if (icon != null) Icon(icon, size: 20, color: fg.withValues(alpha: 0.75)),
+                ?icon,
                 Flexible(
                   child: Text(
                     text(s['label'], item),
@@ -296,9 +422,14 @@ class _Builder {
     }
   }
 
-  /// Size and tap for any component; Header, InfoRow and Button handle their own tap.
+  /// Padding, size and tap for any component; Header, InfoRow and Button handle their own tap.
+  /// Padding is inside the size (as CSS border-box): a Box and a sideways Row pad themselves.
   Widget _wrap(Map<String, Object?> s, Object? item, Widget w) {
     final type = s['component'];
+    final padding = insets(s['padding']);
+    if (type != 'Box' && !(type == 'Row' && s['scroll'] == true) && padding != EdgeInsets.zero) {
+      w = Padding(padding: padding, child: w);
+    }
     if (type != 'Image' && (s['width'] != null || s['height'] != null)) {
       w = SizedBox(width: number(s['width']), height: number(s['height']), child: w);
     }
@@ -321,9 +452,14 @@ class _Builder {
       // A template repeated over a list in the data: paths without "/" read the item.
       final items = c['path'] is String ? _lookup(c['path'] as String, item) : null;
       final templateId = c['componentId'] as String;
+      // `separator`: a block drawn between two repeats (a divider), never before the first or after the last.
+      final separatorId = c['separator'] is String ? c['separator'] as String : null;
       for (final element in items is List ? items : const <Object?>[]) {
         final w = build(templateId, element, depth + 1);
-        if (w != null) pairs.add((v.surface.components[templateId], w));
+        if (w == null) continue;
+        final between = pairs.isEmpty || separatorId == null ? null : build(separatorId, item, depth + 1);
+        if (between != null) pairs.add((v.surface.components[separatorId], between));
+        pairs.add((v.surface.components[templateId], w));
       }
     }
     return [
