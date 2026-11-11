@@ -126,7 +126,23 @@ void main() {
     }) as TurnPaused;
     expect(e.callIds, ['c_1', 'c_2']);
     expect(e.deadline, DateTime.utc(2026, 11, 9, 10));
+    expect(e.expiresIn, const Duration(seconds: 60));
     expect(e.maxResultBytes, 32768);
+  });
+
+  test('turn.paused carries the time the server waits and the result size it accepts', () {
+    final e = event('turn.paused', {
+      'call_ids': ['c_1'],
+      'deadline': '2026-11-09T10:00:00Z',
+      'expires_in': 30,
+      'max_result_bytes': 4096,
+    }) as TurnPaused;
+    expect(e.expiresIn, const Duration(seconds: 30));
+    expect(e.maxResultBytes, 4096);
+    // Neither given: the contract's defaults.
+    final bare = event('turn.paused', {'call_ids': ['c_1']}) as TurnPaused;
+    expect(bare.expiresIn, const Duration(seconds: 60));
+    expect(bare.maxResultBytes, 32768);
   });
 
   test('audio, suggestions, transcript and done parse', () {

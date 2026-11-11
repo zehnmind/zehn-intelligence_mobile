@@ -40,9 +40,17 @@ class FakeRunner extends ZiToolRunner {
 
   final List<List<ClientApiRequest>> rounds = [];
 
+  /// What each round was told of the pause it answers.
+  final List<({Duration? expiresIn, int? maxResultBytes})> pauses = [];
+
   @override
-  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls) async {
+  Future<List<ToolCallResult>> runAll(
+    List<ClientApiRequest> calls, {
+    Duration? expiresIn,
+    int? maxResultBytes,
+  }) async {
     rounds.add(calls);
+    pauses.add((expiresIn: expiresIn, maxResultBytes: maxResultBytes));
     return [for (final c in calls) ToolCallResult.ok(c.callId, {'tool': c.tool})];
   }
 }

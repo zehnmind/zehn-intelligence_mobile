@@ -72,10 +72,12 @@ await ZehnIntelligence.init(
 - `client` wins over `accessToken` / `onUnauthorized`; passing both prints a debug warning.
 - With neither, tools that need login answer `not_signed_in` without a request.
 - `init` waits for no network call: it starts `GET /v1/config` in the background and keeps
-  nothing from the console on the phone but the install id. It throws `ZiConfigException`
+  nothing from the console on the phone but the install id and the last good config (see
+  [Where the button shows](#where-the-button-shows-button)). It throws `ZiConfigException`
   only when there is no app key.
 - `ZehnAiButton` opens the new chat sheet. It is hidden while the console answers
-  `404 spec_not_found` (nothing published yet).
+  `404 spec_not_found` (nothing published yet). The SDK's own floating button (`start`) also
+  follows `button` of the config.
 - `setLanguage`, `setUser`, `clearUser`, `signedIn`, `signedOut`, `registerTool`,
   `registerComponent`, `isInitialized` keep their names and now work.
 
@@ -167,7 +169,8 @@ are shared). No user token.
   "copy": {
     "welcome_title": { "uz": "Qanday yordam bera olaman?", "en": "How can I help you?" },
     "welcome_subtitle": "Find stores, restaurants, offers and more."
-  }
+  },
+  "button": { "show_on": "except", "paths": ["/", "/auth", "/signin"] }
 }
 ```
 
@@ -177,11 +180,65 @@ are shared). No user token.
 - The language the SDK uses: the app's `setLanguage`, else the phone's if listed in
   `languages`, else `default_language`, else the first listed.
 - `404 spec_not_found`: nothing is published; `ZehnAiButton` hides and `openChat` does
-  nothing. Any other failure keeps the last settings (the SDK's defaults at first).
+  nothing, and the kept config is deleted. Any other failure keeps the last settings (the kept
+  config, or the SDK's defaults at first).
 - No spec version either way: the server picks it. The SDK never sends `X-ZI-Spec-Version`,
   which would make the server treat the build as one that pins a spec (no cards, no writes).
 
 `GET /v1/suggestions` gives only the starter chips.
+
+### Where the button shows: `button`
+
+`button` says on which screens the SDK's own floating button shows. The server always sends it
+(an app published before it existed gets `all`).
+
+| `show_on` | The button shows |
+|---|---|
+| `all` | on every screen (`paths` is `[]`) |
+| `only` | only on the screens in `paths` |
+| `except` | on every screen except those in `paths` |
+
+A path is the app's route as its router writes it: `/`, `/auth`, `/movies/:id`, `/orders/{id}`.
+A publish hides the button on the screens before sign-in the analysis found (splash, onboarding,
+sign-in, OTP, password reset, PIN); the developer changes it in the console ("Where the button
+shows").
+
+- **Reading.** A missing or unknown `show_on` counts as `all`; so does `only` or `except` with no
+  path (the server never sends that), so a broken rule can't hide the button everywhere.
+- **The open screen** is followed at every change, with no code in the app and no dependency on
+  its router package:
+  - An app with a `Router` (`MaterialApp.router`: go_router, auto_route, beamer): the location the
+    router reports to its `routeInformationProvider`. A go_router `push` counts: the screen on top
+    is read from the `imperativeMatches` of the state it reports.
+  - An app with the Navigator's named routes (and GetX): the name of the top route.
+  - A sheet or a dialog over a screen keeps that screen's path.
+  - A screen pushed as a widget with no name is not known: the button **shows**.
+- **Matching** is segment by segment. A `:name` or `{name}` segment matches any one segment. The
+  query, a fragment and a trailing slash are left out. `/` matches only `/`.
+
+  | Open screen | Path in `paths` | Match |
+  |---|---|---|
+  | `/movies/42?day=1` | `/movies/:id` | yes |
+  | `/orders/7/` | `/orders/{id}` | yes |
+  | `/movies` | `/movies/:id` | no |
+  | `/home` | `/` | no |
+
+- **While the chat is open** the button stays hidden.
+
+### The kept config
+
+Without a kept config the button would flash on the splash at every start and show on the login
+screen when the phone is offline. So the SDK keeps the last good config in a file (`ZiFileStore`,
+like the install id), tied to the console URL and a fingerprint of the app key (another key, the
+test one then the production one, never reads it; the key itself isn't written).
+
+- **Start:** the kept config is used at once; the fresh one replaces it in the background.
+- **No kept config** (a first start, a reinstall): the button stays hidden until a config
+  arrives. Without our server the chat can't answer anyway.
+- **The config can't load** (offline, a 5xx, a bad body): the kept one stays. It is asked for
+  again when the app comes back to the foreground, not only when the chat opens: with the button
+  hidden, the chat can't open.
+- **`404 spec_not_found`:** the button hides and the kept config is deleted.
 
 ## Install id: `X-ZI-Install-Id`
 
@@ -189,6 +246,35 @@ The SDK makes a random id once (16 bytes, 32 hex characters), keeps it in its su
 (an id an older SDK saved is kept), and sends it on every console call. With no `userToken`
 there is no `Authorization` header. A token error with no user token is not retried. There is no
 `/v1/installs`.
+
+### A sign-out is noticed from the app's Dio
+
+History is per install, so the next person on the phone must not keep the last one's install id.
+`start(dio:)` adds **one interceptor at the end of the app's Dio** (`ZiSignOutWatch`). It never
+changes or stops the app's requests: it sees each one with the `Authorization` the app's own
+interceptors set.
+
+- **Who a request is for:** no `Authorization`, nobody; a JWT, its user claim (`sub`, `user_id`,
+  `uid` or `id`, read without checking the signature, so a refreshed token is the same person);
+  any other token, the token itself. Only a SHA-256 fingerprint is kept, in memory and in a file
+  (`user.json`), so a change between two launches is noticed too.
+- **A sign-out** is somebody, then somebody else, or then nobody. It makes a new install id at
+  once, stops the running turn, and empties the chat; the history is the new install's, so
+  empty.
+- **The check:** before the chat opens, the SDK sends a request through the Dio that its own
+  interceptor answers itself (`204`): the app's interceptors add their header, nothing leaves
+  the phone. It waits at most 3 s (an interceptor may refresh a token first) and never blocks the
+  chat. If an interceptor was added after ours, the check moves ours to the end first.
+- **"Nobody" is decided by the check alone.** A request of the app's own with no `Authorization`
+  says nothing: apps send public requests (a catalog, a splash config) while somebody is signed
+  in. So a sign-out with nobody signing in after it is noticed when the chat next opens, which
+  is the first time it could matter. Somebody else signing in is noticed at their first request.
+- **A caveat:** a token that is not a JWT is the person itself, as the contract says, so an app
+  whose access token is opaque and changes on refresh looks like a new person at each refresh.
+  JWTs are fine.
+
+`ZehnIntelligence.signedOut()` and `clearUser()` still do the same at once, for an app that wants
+to say so itself.
 
 ## A turn
 
@@ -200,13 +286,18 @@ As `MOBILE_INTEGRATION.md`, with these SDK specifics:
 - One turn at a time. `turn.started` gives the `conversation_id` for the next question.
 - `client_api_request`: when the round's stream ends with `turn.paused`, the SDK runs all
   its calls at once, each through: in-app handler → the call's `request` → error
-  `handler_not_registered`. Each call has 20 s; results over 32 KB become `result_too_large`.
-  All results go in one `tool-results` request.
+  `handler_not_registered`. Each call has the pause's `expires_in − 5 s` (at least one second;
+  60 s unless the event says otherwise), and a result over the pause's `max_result_bytes` (32 KB
+  unless it says otherwise) becomes `result_too_large`. All results go in one `tool-results`
+  request.
 - `confirm`: one card, the template with Cancel and Confirm inside its frame (section above);
   writes wait for it. In-app handlers never ask.
-- Proxy errors the model reads: `not_confirmed`, `not_signed_in`, `host_not_allowed`, `method_not_allowed`,
-  `invalid_request` (a broken `request`), `http_error` (message names the status),
-  `network_error`, `timeout`, `handler_failed`, `result_too_large`.
+- Proxy errors the model reads: `not_confirmed`, `host_not_allowed`, `method_not_allowed`,
+  `invalid_request` (a broken `request`), `timeout`, `result_too_large`, and for what the app's
+  server answered (`docs/sdk.md` §5.1): `not_signed_in` (401, 403), `not_found` (404),
+  `handler_failed` (another 4xx with its short `message` or `detail`; a 5xx with only its
+  status; no answer; a body that is not JSON).
+- The SDK's requests carry `options.extra['zi'] = true`; the app's interceptors still run.
 - A 401 from the customer API: in callbacks mode call `onUnauthorized` once and retry once;
   still 401 → `not_signed_in`. In `client` mode the app's interceptors already refreshed, so
   a 401 is `not_signed_in` at once.

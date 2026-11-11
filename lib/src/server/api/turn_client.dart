@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 
+import '../../ui/zehn_integrator.dart' show ziIsComponentName, ziIsToolName;
 import '../auth/token_source.dart';
 import 'api_client.dart';
 import 'sse.dart';
@@ -55,6 +56,31 @@ class TurnInput {
   };
 }
 
+/// The names of the tools the app registered handlers for and of the
+/// components it registered builders for, as they stand now.
+typedef ZiRegistered = ({Iterable<String> tools, Iterable<String> components}) Function();
+
+/// The most names of each kind a turn carries (the server's limits).
+const ziMaxToolNames = 128;
+const ziMaxComponentNames = 32;
+
+/// What a turn says of the app's own code: `tools` and `components`, each
+/// the valid names once, sorted, and left out when there are none. The
+/// server offers the model a tool the app's handler runs, or a component its
+/// builder draws, only when the turn names it.
+Map<String, Object?> registeredNames(ZiRegistered? registered) {
+  if (registered == null) return const {};
+  final (:tools, :components) = registered();
+  List<String> names(Iterable<String> all, bool Function(String) valid, int most) =>
+      ({for (final name in all) if (valid(name)) name}.toList()..sort()).take(most).toList();
+  final toolNames = names(tools, ziIsToolName, ziMaxToolNames);
+  final componentNames = names(components, ziIsComponentName, ziMaxComponentNames);
+  return {
+    if (toolNames.isNotEmpty) 'tools': toolNames,
+    if (componentNames.isNotEmpty) 'components': componentNames,
+  };
+}
+
 /// One entry of `POST /v1/turns/{id}/tool-results`.
 class ToolCallResult {
   ToolCallResult.ok(this.callId, this.data) : ok = true, errorCode = null, errorMessage = null;
@@ -83,6 +109,7 @@ class ZiTurnClient {
   ZiTurnClient({
     required ZiApiClient api,
     required ZiTokenSource Function() tokens,
+    this.registered,
     this.pingTimeout = const Duration(seconds: 45),
     this.retryDelay = const Duration(seconds: 1),
   }) : _api = api,
@@ -90,10 +117,16 @@ class ZiTurnClient {
 
   final ZiApiClient _api;
   final ZiTokenSource Function() _tokens;
+
+  /// What the app registered in its code; read as each turn starts.
+  final ZiRegistered? registered;
   final Duration pingTimeout;
   final Duration retryDelay;
 
-  Stream<TurnEvent> start(TurnInput input) => _leg((cancel) => _open('/v1/turns', input.toJson(), cancel));
+  Stream<TurnEvent> start(TurnInput input) {
+    final body = {...input.toJson(), ...registeredNames(registered)};
+    return _leg((cancel) => _open('/v1/turns', body, cancel));
+  }
 
   /// Retries once, after [retryDelay], only when there was no HTTP status at
   /// all and the [deadline] has not passed.

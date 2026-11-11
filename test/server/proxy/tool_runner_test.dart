@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/proxy/proxy_executor.dart';
 import 'package:zehn_intelligence/src/server/proxy/tool_runner.dart';
-import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiToolError;
+import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiArg, ZiToolError;
 
 import '../../support/fake_server.dart';
 
@@ -51,6 +51,37 @@ void main() {
     expect(server.requests, isEmpty);
   });
 
+  test('declared arguments are checked before the handler runs', () async {
+    var ran = 0;
+    final checked = ZiToolRunner(
+      handlers: {
+        'map.route': (args) async {
+          ran++;
+          return {'to': args['to']};
+        },
+      },
+      proxy: ZiProxyExecutor(),
+      args: const {
+        'map.route': {
+          'to': ZiArg.string('Where to go', required: true),
+          'floor': ZiArg.integer('The floor', oneOf: [1, 2]),
+          'accessible': ZiArg.boolean('Lifts only'),
+        },
+      },
+    );
+    final results = await checked.runAll([
+      call('a', 'map.route'),
+      call('b', 'map.route', args: {'to': 7}),
+      call('c', 'map.route', args: {'to': 'Zara', 'floor': 9}),
+      call('d', 'map.route', args: {'to': 'Zara', 'accessible': 'yes'}),
+      call('e', 'map.route', args: {'to': 'Zara', 'floor': 2, 'accessible': null, 'other': 1}),
+    ]);
+    expect(results.map((r) => r.errorCode), ['invalid_args', 'invalid_args', 'invalid_args', 'invalid_args', null]);
+    expect(results.first.errorMessage, contains('"to"'));
+    expect(results.last.data, {'to': 'Zara'});
+    expect(ran, 1);
+  });
+
   test('ZiToolError code is kept', () async {
     final results = await runner({'x': (args) async => throw const ZiToolError('not_found', 'No such venue')}).runAll([call('c1', 'x')]);
     expect(results.single.toJson(), {
@@ -68,6 +99,46 @@ void main() {
   test('result over 32 KB is result_too_large', () async {
     final results = await runner({'x': (args) async => {'blob': 'a' * 40000}}).runAll([call('c1', 'x')]);
     expect(results.single.errorCode, 'result_too_large');
+  });
+
+  test("the pause's max_result_bytes is the limit, not the runner's own", () async {
+    final handlers = {'x': (Map<String, Object?> args) async => <String, Object?>{'blob': 'a' * 200}};
+    final within = await runner(handlers).runAll([call('c1', 'x')], maxResultBytes: 1000);
+    expect(within.single.ok, isTrue);
+    final over = await runner(handlers).runAll([call('c1', 'x')], maxResultBytes: 100);
+    expect(over.single.errorCode, 'result_too_large');
+    expect(over.single.errorMessage, contains('100'));
+  });
+
+  test("a call may take the pause's expires_in less 5 s; at least a second", () async {
+    final handlers = {
+      'slow': (Map<String, Object?> args) async {
+        await Future<void>.delayed(const Duration(milliseconds: 1500));
+        return <String, Object?>{'late': true};
+      },
+    };
+    // 6 s − 5 s: one second, so a call of 1.5 s is too slow ...
+    final tight = await runner(handlers).runAll([call('s', 'slow')], expiresIn: const Duration(seconds: 6));
+    expect(tight.single.errorCode, 'timeout');
+    // ... and one second is the least it gets, whatever the pause says.
+    final none = await runner(handlers).runAll([call('s', 'slow')], expiresIn: Duration.zero);
+    expect(none.single.errorCode, 'timeout');
+    // 7 s − 5 s: two seconds, enough, though the runner's own limit is 100 ms.
+    final roomy = await runner(handlers, timeout: const Duration(milliseconds: 100))
+        .runAll([call('s', 'slow')], expiresIn: const Duration(seconds: 7));
+    expect(roomy.single.ok, isTrue);
+  });
+
+  test("the pause's time reaches the request too, not only the runner", () async {
+    server.on('GET', '/slow', (req, _) async {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await respondJson(req, 200, {'ok': true});
+    });
+    final slow = {'method': 'GET', 'path': '/slow', 'base_url': server.url.toString()};
+    // The executor's own limit is 100 ms, the pause's 2 s: the request is let finish.
+    final limited = ZiToolRunner(handlers: const {}, proxy: ZiProxyExecutor(timeout: const Duration(milliseconds: 100)));
+    final results = await limited.runAll([call('c1', 'slow.get', http: slow)], expiresIn: const Duration(seconds: 7));
+    expect(results.single.ok, isTrue);
   });
 
   test('slow call times out without blocking others', () async {

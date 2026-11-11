@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zehn_intelligence/src/server/api/api_client.dart';
 import 'package:zehn_intelligence/src/server/api/turn_client.dart';
 import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
@@ -11,7 +12,11 @@ import '../../support/chat_fakes.dart';
 
 class ThrowingRunner extends FakeRunner {
   @override
-  Future<List<ToolCallResult>> runAll(List<ClientApiRequest> calls) async => throw StateError('bug');
+  Future<List<ToolCallResult>> runAll(
+    List<ClientApiRequest> calls, {
+    Duration? expiresIn,
+    int? maxResultBytes,
+  }) async => throw StateError('bug');
 }
 
 void main() {
@@ -81,6 +86,37 @@ void main() {
     expect(results.map((r) => r.callId), ['c_1', 'c_2']);
     expect(sentDeadline, deadline);
     expect((cubit.state.items.last as ZiAssistantItem).text, 'Found');
+  });
+
+  test("a rate limit keeps the server's wait for the chat to show, and the SDK does not retry", () async {
+    turns.script([
+      const TurnFailed(
+        ZiApiException('user_rate_limited', status: 429, retryAfter: Duration(seconds: 45)),
+        turnId: 't1',
+      ),
+    ]);
+    await cubit.sendText('kino');
+    expect(turns.starts, hasLength(1));
+    expect(cubit.state.busy, isFalse);
+    expect(cubit.state.items.last, const ZiErrorItem('user_rate_limited', retryAfter: Duration(seconds: 45)));
+  });
+
+  test("a pause's expires_in and max_result_bytes are the round's limits", () async {
+    turns
+      ..script([
+        started,
+        const ClientApiRequest(callId: 'c_1', tool: 'cinemas.list', args: {}),
+        TurnPaused(
+          callIds: const ['c_1'],
+          deadline: DateTime.utc(2030),
+          expiresIn: const Duration(seconds: 90),
+          maxResultBytes: 1000,
+          turnId: 't1',
+        ),
+      ])
+      ..script([done]);
+    await cubit.sendText('kino');
+    expect(runner.pauses.single, (expiresIn: const Duration(seconds: 90), maxResultBytes: 1000));
   });
 
   test('inline component goes to items, route goes to opens', () async {

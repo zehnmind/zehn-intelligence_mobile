@@ -45,7 +45,31 @@ class ZiStrings {
   /// Not translated: the brand line under the title.
   String get poweredBy => 'Powered by zehnmind.ai';
 
-  String error(String code) => _w[switch (code) {
+  /// The words for an error [code]. A rate limit (`user_rate_limited`,
+  /// `quota_exceeded`) says how long to wait when the server said ([wait],
+  /// from `Retry-After`).
+  String error(String code, {Duration? wait}) {
+    if (code == 'user_rate_limited' || code == 'quota_exceeded') {
+      return wait == null || wait <= Duration.zero
+          ? _w['e.rateLater']!
+          : _w['e.rate']!.replaceAll('{wait}', _after(wait));
+    }
+    return _w[_errorKey(code)]!;
+  }
+
+  /// How a wait reads in this language, "in 30 s" and so on, in whole units
+  /// rounded up: a wait is never cut short.
+  String _after(Duration wait) {
+    final seconds = (wait.inMilliseconds / 1000).ceil();
+    final (int n, String unit) = seconds < 60
+        ? (seconds, 's')
+        : seconds < 3600
+        ? ((seconds / 60).ceil(), 'm')
+        : ((seconds / 3600).ceil(), 'h');
+    return _w['wait.$unit']!.replaceAll('{n}', '$n');
+  }
+
+  static String _errorKey(String code) => switch (code) {
     'network_error' || 'stream_interrupted' || 'server_unavailable' => 'e.connection',
     'sdk_too_old' || 'key_revoked' => 'e.update',
     'app_disabled' || 'llm_unavailable' => 'e.unavailable',
@@ -55,7 +79,7 @@ class ZiStrings {
     'user_token_required' || 'user_token_expired' => 'e.signIn',
     'payload_too_large' => 'e.tooBig',
     _ => 'e.generic',
-  }]!;
+  };
 
   static const _uz = {
     'history': 'Suhbatlar tarixi',
@@ -96,6 +120,11 @@ class ZiStrings {
     'e.voiceDown': 'Ovoz hozir ishlamayapti, yozib yuboring.',
     'e.signIn': 'Qaytadan kiring.',
     'e.tooBig': 'Yozuv juda uzun.',
+    'e.rate': 'Juda ko‘p so‘rov yuborildi. {wait} qayta urinib ko‘ring.',
+    'e.rateLater': 'Juda ko‘p so‘rov yuborildi. Keyinroq qayta urinib ko‘ring.',
+    'wait.s': '{n} soniyadan keyin',
+    'wait.m': '{n} daqiqadan keyin',
+    'wait.h': '{n} soatdan keyin',
     'e.generic': 'Nimadir xato ketdi.',
   };
 
@@ -138,6 +167,11 @@ class ZiStrings {
     'e.voiceDown': 'Голос сейчас недоступен, напишите текстом.',
     'e.signIn': 'Войдите снова.',
     'e.tooBig': 'Запись слишком длинная.',
+    'e.rate': 'Слишком много запросов. Попробуйте {wait}.',
+    'e.rateLater': 'Слишком много запросов. Попробуйте позже.',
+    'wait.s': 'через {n} с',
+    'wait.m': 'через {n} мин',
+    'wait.h': 'через {n} ч',
     'e.generic': 'Что-то пошло не так.',
   };
 
@@ -180,6 +214,11 @@ class ZiStrings {
     'e.voiceDown': 'Voice is not available right now, please type.',
     'e.signIn': 'Please sign in again.',
     'e.tooBig': 'The recording is too long.',
+    'e.rate': 'Too many requests. Try again {wait}.',
+    'e.rateLater': 'Too many requests. Try again later.',
+    'wait.s': 'in {n} s',
+    'wait.m': 'in {n} min',
+    'wait.h': 'in {n} h',
     'e.generic': 'Something went wrong.',
   };
 }

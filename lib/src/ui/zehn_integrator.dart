@@ -27,6 +27,79 @@ class ZiToolError implements Exception {
   String toString() => 'ZiToolError($code): $message';
 }
 
+/// The name of a tool the catalog can hold: dotted lower case, one to four
+/// segments (`map.route`), at most 48 characters, never starting with `ui`
+/// or `zi`.
+final RegExp ziToolName = RegExp(
+  r'^(?!(ui|zi)(\.|$))[a-z][a-z0-9]*(_[a-z0-9]+)*(\.[a-z][a-z0-9]*(_[a-z0-9]+)*){0,3}$',
+);
+
+/// The name of a component the catalog can hold: one lower-case segment
+/// (`map_route`), at most 40 characters.
+final RegExp ziComponentName = RegExp(r'^[a-z][a-z0-9]*(_[a-z0-9]+)*$');
+
+bool ziIsToolName(String name) => name.length <= 48 && ziToolName.hasMatch(name);
+
+bool ziIsComponentName(String name) => name.length <= 40 && ziComponentName.hasMatch(name);
+
+/// What a value of a [ZiArg] is.
+enum ZiArgType { string, integer, number, boolean }
+
+/// One argument of a tool the app registers, or one prop of a component:
+/// what it is, and the words the model reads about it.
+///
+/// ```dart
+/// args: {
+///   'to': ZiArg.string('Where to go: a shop, the toilets, an exit', required: true),
+///   'floor': ZiArg.integer('The floor', oneOf: [-1, 1, 2, 3]),
+///   'accessible': ZiArg.boolean('True for a step-free route'),
+/// }
+/// ```
+///
+/// Write each one as a literal, in the call that registers the tool: the
+/// console's code analysis reads the declaration from the source to draft
+/// the tool in the app's catalog, and it reads only what is written there.
+class ZiArg {
+  const ZiArg.string(this.description, {this.required = false, List<String>? this.oneOf}) : type = ZiArgType.string;
+
+  const ZiArg.integer(this.description, {this.required = false, List<int>? this.oneOf}) : type = ZiArgType.integer;
+
+  const ZiArg.number(this.description, {this.required = false}) : type = ZiArgType.number, oneOf = null;
+
+  const ZiArg.boolean(this.description, {this.required = false}) : type = ZiArgType.boolean, oneOf = null;
+
+  final ZiArgType type;
+
+  /// For the model: what to pass here.
+  final String description;
+
+  /// True when a call without it is refused.
+  final bool required;
+
+  /// The only values allowed; null allows any of its type.
+  final List<Object>? oneOf;
+
+  /// What is wrong with [value] as the argument [name], for the model to
+  /// read; null when it is fine. A missing optional one is fine.
+  String? problem(String name, Object? value) {
+    if (value == null) return required ? 'The argument "$name" is required.' : null;
+    final fits = switch (type) {
+      ZiArgType.string => value is String,
+      ZiArgType.integer => value is int,
+      ZiArgType.number => value is num,
+      ZiArgType.boolean => value is bool,
+    };
+    if (!fits) return 'The argument "$name" must be ${_article(type.name)} ${type.name}.';
+    final allowed = oneOf;
+    if (allowed != null && !allowed.contains(value)) {
+      return 'The argument "$name" must be one of: ${allowed.join(', ')}.';
+    }
+    return null;
+  }
+
+  static String _article(String word) => word.startsWith('i') ? 'an' : 'a';
+}
+
 /// Controller passed to registered UI components.
 class ZiComponentController {
   const ZiComponentController({this.onCompleted});

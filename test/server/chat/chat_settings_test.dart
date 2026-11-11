@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zehn_intelligence/src/server/button_rule.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_settings.dart';
 
 void main() {
@@ -13,6 +14,10 @@ void main() {
         'welcome_title': {'uz': 'Salom!', 'ru': 'Привет!'},
         'welcome_subtitle': 'Find stores.',
       },
+      'button': {
+        'show_on': 'except',
+        'paths': ['/', '/auth'],
+      },
     });
     expect(s.languages, ['uz', 'ru']);
     expect(s.defaultLanguage, 'uz');
@@ -21,6 +26,15 @@ void main() {
     expect(s.appName, 'Tashkent City Mall');
     expect(s.welcomeTitle('ru'), 'Привет!');
     expect(s.welcomeSubtitle('ru'), 'Find stores.');
+    expect(s.button.showOn, ZiButtonShowOn.except);
+    expect(s.button.showsOn('/auth'), isFalse);
+    expect(s.button.showsOn('/home'), isTrue);
+  });
+
+  test('a config with no button (an app published before it) shows the button on every screen', () {
+    final s = ZiChatSettings.fromJson({'assistant_name': 'Mall guide'});
+    expect(s.button.showOn, ZiButtonShowOn.all);
+    expect(s.button.showsOn('/auth'), isTrue);
   });
 
   test('a welcome map falls back to the default language, then en, then the first', () {
@@ -46,6 +60,7 @@ void main() {
       expect(s.assistantName, isNull);
       expect(s.welcomeTitle('en'), isNull);
       expect(s.welcomeSubtitle('en'), isNull);
+      expect(s.button.showOn, ZiButtonShowOn.all);
     }
   });
 }

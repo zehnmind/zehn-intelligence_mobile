@@ -283,7 +283,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       if (end == null || generation != _generation || isClosed) return;
       switch (end) {
         case TurnPaused():
-          final results = await _tools.runAll(calls);
+          final results = await _tools.runAll(calls, expiresIn: end.expiresIn, maxResultBytes: end.maxResultBytes);
           if (generation != _generation || isClosed) return;
           stream = _turns.sendResults(end.turnId, results, deadline: end.deadline);
         case TurnDone():
@@ -309,7 +309,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
           }
           _emit(state.copyWith(
             busy: false,
-            items: [...state.items, ZiErrorItem(code, retryable: end.error.retryable)],
+            items: [...state.items, ZiErrorItem(code, retryable: end.error.retryable, retryAfter: end.error.retryAfter)],
           ));
           return;
         default:

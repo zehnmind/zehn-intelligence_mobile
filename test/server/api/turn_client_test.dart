@@ -92,6 +92,36 @@ void main() {
     expect((server.requests.single.json! as Map)['language'], 'uz');
   });
 
+  test('names the tools and components the app registered, sorted, valid ones only', () async {
+    server.on('POST', '/v1/turns', (req, _) => respondSse(req, [pausedEvent]));
+    server.on('POST', '/v1/turns/t1/tool-results', (req, _) => respondSse(req, [('done', ev({'outcome': 'answered'}))]));
+    final naming = ZiTurnClient(
+      api: ZiApiClient(baseUrl: server.url, info: info),
+      tokens: () => tokens,
+      registered: () => (
+        tools: ['map.route', 'map.locate', 'Bad Name', 'ui.thing', 'map.route'],
+        components: ['map_spot', 'map_route', 'Nope'],
+      ),
+    );
+    await naming.start(input).toList();
+    final body = server.requests.single.json! as Map;
+    expect(body['tools'], ['map.locate', 'map.route']);
+    expect(body['components'], ['map_route', 'map_spot']);
+
+    // The server keeps them with the turn: a round of results names nothing.
+    await naming.sendResults('t1', [ToolCallResult.ok('c_1', const {'ok': true})], deadline: DateTime(2030)).toList();
+    final results = server.requests.last.json! as Map;
+    expect(results.keys, ['results']);
+  });
+
+  test('a turn of an app that registered nothing names no tools and no components', () async {
+    server.on('POST', '/v1/turns', (req, _) => respondSse(req, [('done', ev({'outcome': 'answered'}))]));
+    await client.start(input).toList();
+    final body = server.requests.single.json! as Map;
+    expect(body.containsKey('tools'), isFalse);
+    expect(body.containsKey('components'), isFalse);
+  });
+
   test('retries once with a refreshed token on user_token_expired', () async {
     var calls = 0;
     server.on('POST', '/v1/turns', (req, _) {

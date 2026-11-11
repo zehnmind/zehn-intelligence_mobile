@@ -123,6 +123,76 @@ void main() {
     expect(e.status, 409);
   });
 
+  group('Retry-After', () {
+    test('a 429 carries the wait the server asked for', () async {
+      server.on('POST', '/v1/turns', (req, _) async {
+        req.response.headers.set('retry-after', '42');
+        await respondJson(req, 429, {'code': 'user_rate_limited', 'message': 'slow down'});
+      });
+      final e = await failure(api.postStream('/v1/turns', {}, userToken: 't'));
+      expect(e.code, 'user_rate_limited');
+      expect(e.status, 429);
+      expect(e.retryAfter, const Duration(seconds: 42));
+      expect(e.retryable, isFalse, reason: 'the SDK never retries by itself');
+    });
+
+    test('the same on a plain call, and with none it is null', () async {
+      server.on('GET', '/v1/suggestions', (req, _) async {
+        req.response.headers.set('Retry-After', '3600');
+        await respondJson(req, 429, {'code': 'quota_exceeded'});
+      });
+      expect((await failure(api.getJson('/v1/suggestions'))).retryAfter, const Duration(hours: 1));
+      server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 429, {'code': 'quota_exceeded'}));
+      expect((await failure(api.getJson('/v1/suggestions'))).retryAfter, isNull);
+    });
+
+    test('whole seconds or an HTTP date; nothing else is a wait', () {
+      final now = DateTime.utc(2026, 11, 11, 12);
+      Duration? parse(String? text) => ZiApiException.parseRetryAfter(text, now: now);
+      expect(parse('30'), const Duration(seconds: 30));
+      expect(parse(' 7 '), const Duration(seconds: 7));
+      expect(parse('Wed, 11 Nov 2026 12:01:00 GMT'), const Duration(minutes: 1));
+      expect(parse('Wed, 11 Nov 2026 11:00:00 GMT'), isNull, reason: 'already past');
+      for (final bad in [null, '', '0', '-5', 'soon', '1.5']) {
+        expect(parse(bad), isNull, reason: '$bad');
+      }
+    });
+  });
+
+  group('an answer that means the assistant cannot be used', () {
+    final cases = {
+      'invalid_key': 401,
+      'key_revoked': 401,
+      'app_mismatch': 401,
+      'invalid_header': 400,
+      'app_disabled': 403,
+      'spec_not_found': 404,
+    };
+
+    test('every one is reported, to whichever call it came', () async {
+      final told = <String>[];
+      api.onUnavailable = (e) => told.add(e.code);
+      for (final MapEntry(key: code, value: status) in cases.entries) {
+        server
+          ..on('GET', '/v1/config', (req, _) => respondJson(req, status, {'code': code}))
+          ..on('POST', '/v1/turns', (req, _) => respondJson(req, status, {'code': code}));
+        expect((await failure(api.getJson('/v1/config'))).code, code);
+        expect((await failure(api.postStream('/v1/turns', {}, userToken: 't'))).code, code);
+      }
+      expect(told, [for (final code in cases.keys) ...[code, code]]);
+    });
+
+    test('other errors are not reported', () async {
+      final told = <String>[];
+      api.onUnavailable = (e) => told.add(e.code);
+      for (final (status, code) in [(401, 'user_token_expired'), (409, 'turn_in_progress'), (429, 'quota_exceeded'), (426, 'sdk_too_old'), (500, 'internal_error')]) {
+        server.on('GET', '/v1/config', (req, _) => respondJson(req, status, {'code': code}));
+        expect((await failure(api.getJson('/v1/config'))).code, code);
+      }
+      expect(told, isEmpty);
+    });
+  });
+
   test('a console URL with a path prefix keeps it', () async {
     server.on('GET', '/api/v1/suggestions', (req, _) => respondJson(req, 200, {}));
     final prefixed = ZiApiClient(baseUrl: server.url.replace(path: '/api/'), info: info);

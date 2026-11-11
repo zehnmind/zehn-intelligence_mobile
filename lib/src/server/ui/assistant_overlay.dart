@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 
+import '../app_screen.dart';
 import '../runtime.dart';
 import 'launcher_button.dart';
 import 'strings.dart';
@@ -15,10 +16,13 @@ import 'strings.dart';
 /// frame. Until the app has a navigator (a splash before `MaterialApp`), it
 /// looks again at each frame the app draws.
 ///
-/// It shows while the assistant is available (nothing published hides it)
-/// and the chat isn't open.
+/// It shows while the assistant is available (nothing published hides it),
+/// the chat isn't open, there is a config to go by, and the screen that is
+/// open is one the config's `button` rule shows it on: the SDK follows the
+/// open screen ([ZiOpenScreen]) and shows or hides the button at every change.
 abstract final class ZiAssistantOverlay {
   static OverlayEntry? _entry;
+  static ZiOpenScreen? _screen;
   static bool _looking = false;
 
   /// Whether the button is in an overlay.
@@ -33,14 +37,16 @@ abstract final class ZiAssistantOverlay {
 
   static void _look(Duration _) {
     if (!_looking) return;
-    final overlay = rootNavigator()?.overlay;
-    if (overlay == null) {
+    final navigator = rootNavigator();
+    final overlay = navigator?.overlay;
+    if (navigator == null || overlay == null) {
       // Not yet: at the next frame the app draws (no frame is asked for).
       WidgetsBinding.instance.addPostFrameCallback(_look);
       return;
     }
     _looking = false;
-    final entry = _entry = OverlayEntry(builder: (_) => const ZiFloatingAssistant());
+    final screen = _screen = ZiOpenScreen(navigator)..start();
+    final entry = _entry = OverlayEntry(builder: (_) => ZiFloatingAssistant(screen: screen));
     overlay.insert(entry);
   }
 
@@ -65,6 +71,9 @@ abstract final class ZiAssistantOverlay {
       final entry = _entry;
       if (entry == null || entry.mounted) return;
       _entry = null;
+      // It followed the old navigator; the new one gets its own.
+      _screen?.dispose();
+      _screen = null;
       install();
     });
   }
@@ -76,13 +85,19 @@ abstract final class ZiAssistantOverlay {
     _entry = null;
     _looking = false;
     if (entry != null && entry.mounted) entry.remove();
+    _screen?.dispose();
+    _screen = null;
   }
 }
 
 /// The floating button: draggable, snapped to the nearest side, above the
 /// keyboard and clear of a bottom navigation bar.
 class ZiFloatingAssistant extends StatefulWidget {
-  const ZiFloatingAssistant({super.key});
+  const ZiFloatingAssistant({super.key, this.screen});
+
+  /// The open screen of the app; null when none is followed, and every
+  /// screen is then one that isn't known (the button shows).
+  final ZiOpenScreen? screen;
 
   static const size = 56.0;
   static const margin = 16.0;
@@ -99,7 +114,7 @@ class ZiFloatingAssistant extends StatefulWidget {
   State<ZiFloatingAssistant> createState() => _ZiFloatingAssistantState();
 }
 
-class _ZiFloatingAssistantState extends State<ZiFloatingAssistant> {
+class _ZiFloatingAssistantState extends State<ZiFloatingAssistant> with WidgetsBindingObserver {
   /// Where the user left it, as a share of the free room (0 to 1 across and
   /// down), so it keeps its place when the screen turns; null: its first place.
   Offset? _place;
@@ -108,7 +123,21 @@ class _ZiFloatingAssistantState extends State<ZiFloatingAssistant> {
   Offset? _dragAt;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// Back in the foreground: with the button hidden the chat can't open, so
+  /// this is where a config that could not load (offline, a 5xx) is tried again.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(ZiRuntime.instance?.retryConfig());
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     ZiAssistantOverlay._left();
     super.dispose();
   }
@@ -132,10 +161,15 @@ class _ZiFloatingAssistantState extends State<ZiFloatingAssistant> {
     // Before any early return: it also redraws the button when the app's
     // language changes, even while the chat is open.
     runtime.readAppLanguage(context);
-    return ValueListenableBuilder<bool>(
-      valueListenable: runtime.available,
-      builder: (context, available, _) {
-        if (!available || _chatOpen) return const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        runtime.available,
+        runtime.hasConfig,
+        runtime.settings,
+        ?widget.screen?.path,
+      ]),
+      builder: (context, _) {
+        if (_chatOpen || !runtime.showsButtonOn(widget.screen?.path.value)) return const SizedBox.shrink();
         final media = MediaQuery.of(context);
         return LayoutBuilder(
           builder: (context, constraints) {

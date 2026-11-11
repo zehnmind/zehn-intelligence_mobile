@@ -198,12 +198,91 @@ void main() {
     await expectLater(ZiProxyExecutor().call(get('/cinematica/')), toolError('handler_failed'));
   });
 
-  test('500 is http_error with status in message', () async {
-    server.on('GET', '/cinematica/', (req, _) => respondText(req, 500, 'boom'));
-    await expectLater(
-      ZiProxyExecutor().call(get('/cinematica/')),
-      throwsA(isA<ZiToolError>().having((e) => e.code, 'code', 'http_error').having((e) => e.message, 'message', contains('500'))),
+  group('what the model reads when the app\'s server does not answer well', () {
+    Matcher fails(String code, {Object? message}) => throwsA(
+      isA<ZiToolError>().having((e) => e.code, 'code', code).having((e) => e.message, 'message', message ?? isNotEmpty),
     );
+
+    test('a 401 and a 403 are not_signed_in', () async {
+      server
+        ..on('GET', '/a', (req, _) => respondJson(req, 401, {}))
+        ..on('GET', '/b', (req, _) => respondJson(req, 403, {'message': 'Forbidden'}));
+      for (final path in ['/a', '/b']) {
+        await expectLater(
+          ZiProxyExecutor().call(get(path)),
+          fails('not_signed_in', message: 'The user is not signed in to the app'),
+          reason: path,
+        );
+      }
+    });
+
+    test('a 404 is not_found', () async {
+      server.on('GET', '/gone', (req, _) => respondJson(req, 404, {'message': 'No such venue'}));
+      await expectLater(ZiProxyExecutor().call(get('/gone')), fails('not_found', message: 'Not found'));
+    });
+
+    test('another 4xx is handler_failed with the answer\'s short message', () async {
+      server
+        ..on('GET', '/bad', (req, _) => respondJson(req, 422, {'message': 'zone_id is required'}))
+        ..on('GET', '/detail', (req, _) => respondJson(req, 400, {'detail': 'Hours must be 1 to 8'}))
+        ..on('GET', '/mute', (req, _) => respondText(req, 409, 'conflict', type: 'text/plain'));
+      await expectLater(
+        ZiProxyExecutor().call(get('/bad')),
+        fails('handler_failed', message: "The app's server answered 422: zone_id is required"),
+      );
+      await expectLater(
+        ZiProxyExecutor().call(get('/detail')),
+        fails('handler_failed', message: "The app's server answered 400: Hours must be 1 to 8"),
+      );
+      await expectLater(ZiProxyExecutor().call(get('/mute')), fails('handler_failed', message: "The app's server answered 409"));
+    });
+
+    test('a long message is left out', () async {
+      server.on('GET', '/long', (req, _) => respondJson(req, 400, {'message': 'x' * 300}));
+      await expectLater(ZiProxyExecutor().call(get('/long')), fails('handler_failed', message: "The app's server answered 400"));
+    });
+
+    test('a 5xx is handler_failed with the status only', () async {
+      server.on('GET', '/boom', (req, _) => respondJson(req, 503, {'message': 'database password is hunter2'}));
+      await expectLater(ZiProxyExecutor().call(get('/boom')), fails('handler_failed', message: "The app's server answered 503"));
+      server.on('GET', '/boom', (req, _) => respondText(req, 500, 'boom'));
+      await expectLater(ZiProxyExecutor().call(get('/boom')), fails('handler_failed', message: contains('500')));
+    });
+
+    test('the same through the app\'s own client', () async {
+      server
+        ..on('GET', '/gone', (req, _) => respondJson(req, 404, {}))
+        ..on('GET', '/denied', (req, _) => respondJson(req, 403, {}))
+        ..on('GET', '/bad', (req, _) => respondJson(req, 400, {'message': 'Bad zone'}))
+        ..on('GET', '/boom', (req, _) => respondJson(req, 502, {}));
+      final proxy = ZiProxyExecutor(appClient: Dio(BaseOptions(baseUrl: server.url.toString())));
+      Future<Object?> app(String path) => proxy.call(ZiHttpCall(method: 'GET', path: path));
+      await expectLater(app('/gone'), fails('not_found'));
+      await expectLater(app('/denied'), fails('not_signed_in'));
+      await expectLater(app('/bad'), fails('handler_failed', message: "The app's server answered 400: Bad zone"));
+      await expectLater(app('/boom'), fails('handler_failed', message: "The app's server answered 502"));
+    });
+  });
+
+  test("the SDK's requests are marked for the app's interceptors", () async {
+    final seen = <Object?>[];
+    final app = Dio(BaseOptions(baseUrl: server.url.toString()))
+      ..interceptors.add(InterceptorsWrapper(onRequest: (o, h) {
+        seen.add(o.extra['zi']);
+        h.next(o);
+      }));
+    await ZiProxyExecutor(appClient: app).call(const ZiHttpCall(method: 'GET', path: '/cinematica/'));
+    expect(seen, [true]);
+  });
+
+  test('the time a call may take is the one it is given, not the executor\'s own', () async {
+    server.on('GET', '/cinematica/', (req, _) async {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await respondJson(req, 200, {'late': true});
+    });
+    final proxy = ZiProxyExecutor(timeout: const Duration(milliseconds: 100));
+    await expectLater(proxy.call(get('/cinematica/')), toolError('timeout'));
+    expect(await proxy.call(get('/cinematica/'), timeout: const Duration(seconds: 5)), {'late': true});
   });
 
   test('slow answer is timeout', () async {
@@ -217,9 +296,16 @@ void main() {
     );
   });
 
-  test('closed server is network_error', () async {
+  test('a server that cannot be reached is handler_failed', () async {
     final call = get('/cinematica/');
     await server.close();
-    await expectLater(ZiProxyExecutor().call(call), toolError('network_error'));
+    await expectLater(
+      ZiProxyExecutor().call(call),
+      throwsA(
+        isA<ZiToolError>()
+            .having((e) => e.code, 'code', 'handler_failed')
+            .having((e) => e.message, 'message', "The app's server is unreachable"),
+      ),
+    );
   });
 }

@@ -98,6 +98,7 @@ sealed class TurnEvent {
       'turn.paused' => TurnPaused(
         callIds: d.stringList('call_ids'),
         deadline: d.deadline(),
+        expiresIn: Duration(seconds: d.optInt('expires_in') ?? 60),
         maxResultBytes: d.optInt('max_result_bytes') ?? 32768,
         turnId: turnId,
         seq: seq,
@@ -232,10 +233,22 @@ final class SuggestionsEvent extends TurnEvent {
 
 /// Ends a leg: post the results of [callIds] before [deadline].
 final class TurnPaused extends TurnEvent {
-  const TurnPaused({required this.callIds, required this.deadline, required this.maxResultBytes, super.turnId, super.seq});
+  const TurnPaused({
+    required this.callIds,
+    required this.deadline,
+    required this.maxResultBytes,
+    this.expiresIn = const Duration(seconds: 60),
+    super.turnId,
+    super.seq,
+  });
 
   final List<String> callIds;
   final DateTime deadline;
+
+  /// How long the server waits for the results, counted from this event: it
+  /// is the phone's clock, not the server's, that this is measured on, so
+  /// each call may take [expiresIn] less a few seconds to post.
+  final Duration expiresIn;
   final int maxResultBytes;
 }
 

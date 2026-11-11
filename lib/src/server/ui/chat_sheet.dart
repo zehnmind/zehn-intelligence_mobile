@@ -807,7 +807,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
         border: Border.all(color: s.line),
       ),
       child: Row(children: [
-        Expanded(child: Text(words.error(item.code), style: s.body.copyWith(color: s.danger))),
+        Expanded(child: Text(words.error(item.code, wait: item.retryAfter), style: s.body.copyWith(color: s.danger))),
         if (item.retryable)
           GestureDetector(
             onTap: () => unawaited(widget.cubit.retry()),

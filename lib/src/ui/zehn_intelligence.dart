@@ -145,12 +145,53 @@ class ZehnIntelligence {
     unawaited(ZiRuntime.instance?.clearUser());
   }
 
-  /// Registry of tools added via the integrator.
+  /// The handlers of the tools the app registered, by name.
   static final Map<String, Future<Map<String, Object?>> Function(Map<String, Object?>)> registeredTools = {};
 
-  /// Registers a tool handler by name.
-  static void registerTool(String name, Future<Map<String, Object?>> Function(Map<String, Object?>) handler) {
+  /// What each registered tool declared of its arguments, by name.
+  static final Map<String, Map<String, ZiArg>> registeredToolArgs = {};
+
+  /// Registers one of the app's own tools: [handler] runs on the phone when
+  /// the assistant calls [name], with the call's arguments, and what it
+  /// returns (JSON, at most 32 KB) is what the model reads. Throw a
+  /// [ZiToolError] to tell the model why it could not answer.
+  ///
+  /// ```dart
+  /// ZehnIntelligence.registerTool(
+  ///   'map.route',
+  ///   (args) => mapTools.route(args),
+  ///   description: 'Walking directions inside the mall to a shop.',
+  ///   args: {
+  ///     'to': ZiArg.string('Where to go', required: true),
+  ///     'accessible': ZiArg.boolean('True for a step-free route'),
+  ///   },
+  ///   examples: {'en': ['How do I get to Zara?']},
+  /// );
+  /// ```
+  ///
+  /// The server decides what the assistant can do, so the tool has to be in
+  /// the app's catalog on the console and published. The console's code
+  /// analysis drafts it from this call: [name] (dotted lower case), the
+  /// [description] the model reads, [args] (also checked here before
+  /// [handler] runs), [examples] of what users say, by language, and
+  /// [resultNote] on what the result holds. Write them as literals: the
+  /// analysis reads the source, it never runs the app. Each turn then names
+  /// the tools registered here, and the server offers the model those.
+  static void registerTool(
+    String name,
+    Future<Map<String, Object?>> Function(Map<String, Object?>) handler, {
+    String? description,
+    Map<String, ZiArg> args = const {},
+    Map<String, List<String>> examples = const {},
+    String? resultNote,
+  }) {
+    assert(ziIsToolName(name), 'A tool name is dotted lower case, like "map.route": "$name"');
     registeredTools[name] = handler;
+    if (args.isEmpty) {
+      registeredToolArgs.remove(name);
+    } else {
+      registeredToolArgs[name] = args;
+    }
     if (instance != null) {
       final parts = name.split('.');
       final domain = parts.first.replaceAll('_', ' ');
@@ -158,14 +199,15 @@ class ZehnIntelligence {
       instance!.tools.add(
         AgentTool(
           name: name,
-          description: name,
+          description: description ?? name,
           kind: ToolKind.read,
           doc: ToolDoc(
-            summary: name,
+            summary: description ?? name,
             examples: {
               'en': [domain, '$domain $verb', '$verb $domain', ...domain.split(' ')],
               'uz': [domain, ...domain.split(' ')],
               'ru': [domain, ...domain.split(' ')],
+              ...examples,
             },
           ),
           run: (call) async {
@@ -181,14 +223,36 @@ class ZehnIntelligence {
     }
   }
 
-  /// Registry of components added via the integrator.
+  /// The builders of the components the app registered, by name.
   static final Map<String, Widget Function(BuildContext, Map<String, Object?>, ZiComponentController)> registeredComponents = {};
 
-  /// Registers a UI component builder by name.
+  /// Registers one of the app's own widgets: [builder] draws it when the
+  /// assistant shows [name], with the props the model gave.
+  ///
+  /// ```dart
+  /// ZehnIntelligence.registerComponent(
+  ///   'map_route',
+  ///   (context, props, controller) => MapRouteCard(props: props),
+  ///   description: 'The route drawn on the mall map. Show it after map.route.',
+  ///   props: {'to': ZiArg.string('`card.to` from map.route', required: true)},
+  /// );
+  /// ```
+  ///
+  /// As for [registerTool], the component has to be in the app's catalog and
+  /// published, and the console's code analysis drafts it from this call:
+  /// [name] (one lower-case word, like `map_route`), [kind] (`inline`: in
+  /// the chat, or `sheet`: in a bottom sheet), the [description] the model
+  /// reads and the [props] it fills. Write them as literals. Each turn names
+  /// the components registered here, and the server offers the model those.
   static void registerComponent(
     String name,
-    Widget Function(BuildContext, Map<String, Object?>, ZiComponentController) builder,
-  ) {
+    Widget Function(BuildContext, Map<String, Object?>, ZiComponentController) builder, {
+    String kind = 'inline',
+    String? description,
+    Map<String, ZiArg> props = const {},
+  }) {
+    assert(ziIsComponentName(name), 'A component name is one lower-case word, like "map_route": "$name"');
+    assert(kind == 'inline' || kind == 'sheet', 'A component is shown inline or in a sheet: "$kind"');
     registeredComponents[name] = builder;
   }
 
@@ -270,6 +334,7 @@ class ZehnIntelligence {
       userToken: userToken,
       openRoute: openRoute,
       handlers: registeredTools,
+      toolArgs: registeredToolArgs,
       builders: registeredComponents,
     );
   }
@@ -298,6 +363,7 @@ class ZehnIntelligence {
         client: client,
         openRoute: openAppRoute,
         handlers: registeredTools,
+        toolArgs: registeredToolArgs,
         builders: registeredComponents,
       );
       ZiAssistantOverlay.install();

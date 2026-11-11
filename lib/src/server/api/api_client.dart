@@ -1,8 +1,21 @@
 import 'dart:convert';
+import 'dart:io' show HttpDate;
 
 import 'package:dio/dio.dart';
 
 import 'client_info.dart';
+
+/// Codes of an answer that mean this build can't use the assistant at all:
+/// the key or the app is wrong or switched off, or nothing is published
+/// (`docs/sdk.md` §5). The SDK hides the assistant and logs the code.
+const ziUnavailableCodes = {
+  'invalid_key',
+  'key_revoked',
+  'app_mismatch',
+  'invalid_header',
+  'app_disabled',
+  'spec_not_found',
+};
 
 /// An error from the console, or one the SDK names itself (`network_error`,
 /// `server_unavailable`, `stream_interrupted`, `invalid_response`).
@@ -15,17 +28,20 @@ class ZiApiException implements Exception {
     this.params = const {},
     this.message = '',
     this.retryable = false,
+    this.retryAfter,
   });
 
   /// Maps an error answer. Any 422 is `invalid_request`; a body that is not
   /// JSON (a proxy page) is `server_unavailable`; an unknown 5xx is retryable.
-  factory ZiApiException.fromResponse(int status, Object? body) {
+  /// [retryAfter] is the answer's `Retry-After`, if it had a usable one.
+  factory ZiApiException.fromResponse(int status, Object? body, {Duration? retryAfter}) {
     if (body is! Map) {
       return ZiApiException(
         'server_unavailable',
         status: status,
         message: 'The server did not answer with JSON ($status).',
         retryable: true,
+        retryAfter: retryAfter,
       );
     }
     final serverCode = body['code'];
@@ -45,7 +61,23 @@ class ZiApiException implements Exception {
       params: params is Map ? params.cast<String, Object?>() : const {},
       message: message is String ? message : '',
       retryable: retryable is bool ? retryable : status >= 500,
+      retryAfter: retryAfter,
     );
+  }
+
+  /// `Retry-After` as a wait: whole seconds, or an HTTP date. Null when
+  /// missing, unreadable or already past.
+  static Duration? parseRetryAfter(String? header, {DateTime? now}) {
+    final text = header?.trim();
+    if (text == null || text.isEmpty) return null;
+    final seconds = int.tryParse(text);
+    if (seconds != null) return seconds > 0 ? Duration(seconds: seconds) : null;
+    try {
+      final wait = HttpDate.parse(text).difference(now ?? DateTime.now());
+      return wait > Duration.zero ? wait : null;
+    } on Object {
+      return null;
+    }
   }
 
   final String code;
@@ -55,6 +87,10 @@ class ZiApiException implements Exception {
   final Map<String, Object?> params;
   final String message;
   final bool retryable;
+
+  /// How long the server asks to wait (`429`'s `Retry-After`); the SDK never
+  /// retries by itself, it shows the wait.
+  final Duration? retryAfter;
 
   @override
   String toString() => 'ZiApiException($code, $status): $message';
@@ -78,6 +114,10 @@ class ZiApiClient {
 
   /// This install's id (`loadInstallId`); sent once known.
   String? installId;
+
+  /// Told of every answer whose code is one of [ziUnavailableCodes], whichever
+  /// call it came to: the runtime hides the assistant.
+  void Function(ZiApiException error)? onUnavailable;
 
   // No X-ZI-Spec-Version: with it the server treats the build as an old one
   // that pins a spec (no cards, no writes).
@@ -140,7 +180,7 @@ class ZiApiClient {
         retryable: true,
       );
     }
-    throw ZiApiException.fromResponse(status, _decode(text));
+    throw _answered(status, _decode(text), response.headers);
   }
 
   Future<Object?> _json(
@@ -184,7 +224,19 @@ class ZiApiClient {
       }
       return decoded;
     }
-    throw ZiApiException.fromResponse(status, _decode(text));
+    throw _answered(status, _decode(text), response.headers);
+  }
+
+  /// The exception for an error answer, noticed first if it says the assistant
+  /// can't be used.
+  ZiApiException _answered(int status, Object? body, Headers headers) {
+    final error = ZiApiException.fromResponse(
+      status,
+      body,
+      retryAfter: ZiApiException.parseRetryAfter(headers.value('retry-after')),
+    );
+    if (ziUnavailableCodes.contains(error.code)) onUnavailable?.call(error);
+    return error;
   }
 
   static const Object _notJson = Object();
@@ -197,10 +249,11 @@ class ZiApiClient {
     }
   }
 
-  static ZiApiException _network(DioException e) {
+  ZiApiException _network(DioException e) {
     final response = e.response;
     if (response != null && response.statusCode != null) {
-      return ZiApiException.fromResponse(response.statusCode!, response.data);
+      final data = response.data;
+      return _answered(response.statusCode!, data is String ? _decode(data) : data, response.headers);
     }
     return ZiApiException(
       'network_error',

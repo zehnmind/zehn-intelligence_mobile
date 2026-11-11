@@ -30,7 +30,7 @@ import 'dart:typed_data';
 
 /// What the console knows about the app: `api` (base_url, auth, headers),
 /// `tools`, `components`, `theme`, `copy`, `languages`,
-/// `default_language`.
+/// `default_language`, `button` (where the SDK's button shows).
 late Map<String, Object?> _app;
 
 Future<void> main(List<String> args) async {
@@ -548,7 +548,8 @@ Map<String, Object?> _mount(String callId, String component, Map<String, Object?
   };
 }
 
-/// `GET /v1/config`.
+/// `GET /v1/config`. Like the real server, it always sends `button`: with
+/// none in the app description, the button shows on every screen.
 Map<String, Object?> _config() => {
   'assistant_name': ?_app['assistant_name'],
   'app_name': ?_app['app_name'],
@@ -556,6 +557,7 @@ Map<String, Object?> _config() => {
   'default_language': _app['default_language'] ?? 'uz',
   'theme': _app['theme'] ?? const <String, Object?>{},
   'copy': _app['copy'] ?? const <String, Object?>{},
+  'button': _app['button'] ?? const {'show_on': 'all', 'paths': <String>[]},
 };
 
 String _w(String language, String uz, String ru, String en) => switch (language) {

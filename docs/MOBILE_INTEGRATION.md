@@ -111,6 +111,8 @@ Spoken:
 | `language` | The app's current UI language: `uz`, `ru`, `en`... |
 | `utc_offset_minutes` | The phone's offset from UTC. Tashkent is `300`. Optional. |
 | `voice_reply` | `true` speaks the answer (`audio` events). It stays on for the whole turn: no need to send it again with tool results. |
+| `tools` | The names of the tools the app registered handlers for (`ZehnIntelligence.registerTool`), sorted, at most 128. Left out when there are none. The server offers the model a tool that has no request only when the turn names it. See [Tools and widgets of the app's own](#tools-and-widgets-of-the-apps-own). |
+| `components` | The names of the components the app registered builders for (`ZehnIntelligence.registerComponent`), sorted, at most 32. Left out when there are none. |
 
 The answer is `200 text/event-stream`, with the header `X-ZI-Turn-Id`.
 
@@ -128,9 +130,9 @@ The SDK runs the handlers and posts **all results of that round in one request**
 }
 ```
 
-- `data` can be any JSON, up to 32 KB.
+- `data` can be any JSON, up to `max_result_bytes` of the pause (32 KB by default).
 - `error.code` is `^[a-z][a-z0-9_]{0,63}$`. `message` is at most 500 characters. The model reads it, so never put secrets there.
-- Send the results before the deadline: 60 s, given in `turn.paused`.
+- Send the results before the deadline: `expires_in` (60 s by default) of `turn.paused`. Each call gets `expires_in − 5 s` to finish (at least a second), so there is time to post.
 - Retry only if there was **no HTTP status** at all (a network failure): once, after 1 s, and only while the deadline hasn't passed.
 - The answer is a new SSE stream for the same turn.
 
@@ -138,13 +140,67 @@ Error codes the SDK sets itself:
 
 | Code | When |
 |---|---|
-| `handler_not_registered` | The app has no handler for this tool |
-| `invalid_args` | The arguments are wrong |
-| `handler_failed` | The handler threw an error |
-| `timeout` | The handler didn't finish in time |
-| `result_too_large` | The result is over 32 KB |
+| `handler_not_registered` | The call has no request and the app has no handler for this tool |
+| `invalid_args` | The arguments don't fit what the registered tool declared |
+| `handler_failed` | The handler threw an error, or the app's server failed (see below) |
+| `not_signed_in` | A request got `401` or `403`: the user is not signed in to the app |
+| `not_found` | A request got `404` |
+| `timeout` | The call didn't finish within `expires_in − 5 s` |
+| `result_too_large` | The result is over `max_result_bytes` (32 KB by default) |
+
+What a request through the app's Dio gives the model, by what came back: `401` and `403` are
+`not_signed_in`; `404` is `not_found`; another `4xx` is `handler_failed`, "The app's server
+answered 422: <its `message` or `detail`, if short>"; a `5xx`, no answer at all, or a body that
+is not JSON is `handler_failed` too ("The app's server answered 503", "…is unreachable"; a 5xx
+never passes on its own message). The SDK's requests carry `options.extra['zi'] = true`, so an
+interceptor of the app's could tell them from its own; the app's interceptors still run.
 
 The app can also throw its own code, e.g. `ZiToolError('not_signed_in', 'Ask the user to sign in')`.
+
+## Tools and widgets of the app's own
+
+Most tools are requests the server builds and the SDK sends through the app's Dio, and most
+cards are templates the server sends. Some things only the app's code can do: read data that
+ships with the app, or draw a widget no template can (a map). The app registers those, before
+or after `ZehnIntelligence.start`:
+
+```dart
+ZehnIntelligence.registerTool(
+  'map.route',
+  (args) => mapTools.route(args),
+  description: 'Walking directions inside the mall to a shop.',
+  args: {
+    'to': ZiArg.string('Where to go', required: true),
+    'accessible': ZiArg.boolean('True for a step-free route'),
+  },
+  examples: {'en': ['How do I get to Zara?']},
+  resultNote: '`card` is what to pass to map_route.',
+);
+
+ZehnIntelligence.registerComponent(
+  'map_route',
+  (context, props, controller) => MapRouteCard(props: props),
+  description: 'The route drawn on the mall map. Show it after map.route.',
+  props: {'to': ZiArg.string('`card.to` from map.route', required: true)},
+);
+```
+
+- **The server still decides what the assistant can do.** A registered tool reaches the model
+  only once it is in the app's catalog and published. The console's code analysis reads these
+  calls from the source (it never runs the app) and drafts the tool and the component with the
+  same names, descriptions and arguments, so write every value as a literal.
+- **Names.** A tool: dotted lower case, one to four parts, at most 48 characters, not starting
+  with `ui` or `zi` (`map.route`). A component: one lower-case word, at most 40 (`map_route`).
+  A debug build refuses another name when it is registered; a release build never sends it.
+- **Each turn names them** (`tools`, `components` in `POST /v1/turns`), so the server never
+  offers the model what this build can't run or draw.
+- **A call** comes as a `client_api_request` with no `request`: the SDK runs the handler. The
+  arguments are checked against what the tool declared first (`invalid_args`). What the
+  handler returns is the result, at most 32 KB; a `ZiToolError` it throws is the error the
+  model reads. A handler registered for a tool that also has a request wins over the request.
+- **A widget** comes as a `mount_component` with no `surface`: the SDK calls the builder with
+  the props the model gave. A reopened conversation draws it again from the same props, so a
+  builder must be able to draw from its props alone.
 
 ## 3. The SSE stream
 
@@ -269,10 +325,10 @@ Before the stream starts, an error is a JSON body with an HTTP status. After the
 |---|---|---|
 | `user_token_expired` | 401 | Get a new token, retry once |
 | `user_token_required` | 401 | No token, or a bad one. Get a token once, retry once. If it fails again: "sign in again". |
-| `invalid_header`, `invalid_key`, `app_mismatch`, `spec_not_found` | 400 / 401 / 404 | Setup error: wrong config or build |
+| `invalid_header`, `invalid_key`, `key_revoked`, `app_mismatch`, `spec_not_found` | 400 / 401 / 404 | Hide the assistant and log the code, whichever call it came to; the kept config is forgotten and it is tried again at the next start of the app. In the chat: "Update the app" for `key_revoked`. |
+| `app_disabled` | 403 | Hide the assistant, as above. In the chat: "The assistant is not available right now" |
 | `sdk_too_old` | 426 | "Update the app" (`params.min_version`) |
-| `key_revoked` | 401 | "Update the app" |
-| `app_disabled` | 403 | "The assistant is not available right now" |
+| `user_rate_limited`, `quota_exceeded` | 429 | Show the wait from `Retry-After` ("Try again in 30 s"); never retry by itself |
 | `service_not_enabled` | 400 | The mic or voice reply is not switched on for this app. Hide it. |
 | `conversation_not_found`, `conversation_spec_changed`, `conversation_full` | 404 / 409 | Resend once with `conversation_id: null`. For `conversation_full`, also note "starting a new chat". |
 | `turn_in_progress` | 409 | A turn is already running. Never send two at once. |
@@ -314,9 +370,8 @@ Codes the SDK sets itself:
 These features don't exist yet, but the SDK should tolerate them when they come:
 
 - Resuming a dropped stream (`Last-Event-ID`) and cancelling a turn. Until then, a dropped stream is a retryable error and the user asks again.
-- Quotas and rate limits: `429 quota_exceeded` and `429 user_rate_limited`, with `Retry-After`.
 - Blocking an app version (`403 version_disabled`) or a user (`403 user_blocked`).
-- Preflight (the SDK reports its registered handlers) and a telemetry endpoint.
+- A telemetry endpoint.
 
 ## Local testing without a customer backend
 

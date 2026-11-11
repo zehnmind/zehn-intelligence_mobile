@@ -90,13 +90,17 @@ final class ZiConfirmItem extends ZiChatItem {
 }
 
 final class ZiErrorItem extends ZiChatItem {
-  const ZiErrorItem(this.code, {this.retryable = false});
+  const ZiErrorItem(this.code, {this.retryable = false, this.retryAfter});
 
   final String code;
   final bool retryable;
 
+  /// The wait the server asked for (`429`'s `Retry-After`); shown, never
+  /// waited out by the SDK.
+  final Duration? retryAfter;
+
   @override
-  List<Object?> get props => [code, retryable];
+  List<Object?> get props => [code, retryable, retryAfter];
 }
 
 class ZiChatState extends Equatable {

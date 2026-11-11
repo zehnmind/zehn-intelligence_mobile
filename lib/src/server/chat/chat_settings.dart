@@ -1,6 +1,8 @@
-/// How the chat looks: `GET /v1/config`, asked for in
-/// the background at start-up and again each time the chat opens. Missing or
-/// broken fields fall back to the SDK's own defaults.
+import '../button_rule.dart';
+
+/// How the chat looks and where its button shows: `GET /v1/config`, asked
+/// for in the background at start-up and again each time the chat opens.
+/// Missing or broken fields fall back to the SDK's own defaults.
 class ZiChatSettings {
   const ZiChatSettings({
     this.languages = const [],
@@ -8,6 +10,7 @@ class ZiChatSettings {
     this.theme = const {},
     this.assistantName,
     this.appName,
+    this.button = const ZiButtonRule(),
     Object? welcomeTitle,
     Object? welcomeSubtitle,
   }) : _welcomeTitle = welcomeTitle,
@@ -23,6 +26,7 @@ class ZiChatSettings {
       theme: theme is Map ? theme.cast<String, Object?>() : const {},
       assistantName: _string(json['assistant_name']),
       appName: _string(json['app_name']),
+      button: ZiButtonRule.fromJson(json['button']),
       welcomeTitle: copy['welcome_title'],
       welcomeSubtitle: copy['welcome_subtitle'],
     );
@@ -39,6 +43,10 @@ class ZiChatSettings {
   /// The chat's title; null uses the SDK's word.
   final String? assistantName;
   final String? appName;
+
+  /// The screens the SDK's own button shows on; every screen when the
+  /// config has no `button`.
+  final ZiButtonRule button;
 
   /// One string, or a language map.
   final Object? _welcomeTitle;
