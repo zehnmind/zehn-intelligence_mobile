@@ -3,7 +3,7 @@
 How the console defines the cards the assistant shows in a customer's app, and what the
 backend must store, validate and send so the mobile SDK can draw them.
 
-Matches SDK `0.5.0` (`zehn_intelligence`, `main`) and the backend's answer,
+Matches SDK `0.6.0` (`zehn_intelligence`, `main`) and the backend's answer,
 `CARDS_FOR_MOBILE.md` (branch `feat/proxy-sdk`). Related documents:
 
 - `docs/MOBILE_INTEGRATION.md`: the turn protocol (`/v1/turns`, SSE events, tool results).
