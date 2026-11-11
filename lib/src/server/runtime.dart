@@ -64,6 +64,21 @@ ZiInitConfig resolveInitConfig({
   );
 }
 
+/// The language the app is shown in above [context]: the locale its
+/// `MaterialApp` (or any `WidgetsApp`) resolved. Null with no app above, or
+/// when the app never chose one (no `locale:` and only Flutter's default
+/// `en_US` supported), so Flutter's `en` isn't taken for the app's choice.
+String? ziAppLanguageOf(BuildContext context) {
+  final locale = Localizations.maybeLocaleOf(context);
+  if (locale == null) return null;
+  final app = context.findAncestorWidgetOfExactType<WidgetsApp>();
+  final unchosen = app != null &&
+      app.locale == null &&
+      app.supportedLocales.length == 1 &&
+      app.supportedLocales.single == const Locale('en', 'US');
+  return unchosen ? null : locale.languageCode;
+}
+
 /// Everything `ZehnIntelligence.init` builds for the server flow.
 class ZiRuntime {
   ZiRuntime._({
@@ -99,6 +114,7 @@ class ZiRuntime {
   /// The user's past conversations (`/v1/conversations`).
   late final ZiHistory history = ZiHistory(api: api, tokens: () => _tokens);
   String? _language;
+  String? _appLanguage;
   late final ZiToolRunner _tools;
 
   @visibleForTesting
@@ -174,19 +190,26 @@ class ZiRuntime {
     }
   }
 
-  /// The app's choice ([ZehnIntelligence.setLanguage]), else the phone's if
-  /// the assistant offers it, else the assistant's default, else `en`.
+  /// [ZehnIntelligence.setLanguage]'s, else the one the app is shown in, else
+  /// the phone's, of those the assistant offers; else the assistant's default,
+  /// else the first it offers.
   String get language {
     final chosen = _language;
     if (chosen != null) return chosen;
     final current = settings.value;
     final offered = current.languages.isNotEmpty ? current.languages : const ['uz', 'ru', 'en'];
-    final device = PlatformDispatcher.instance.locale.languageCode;
-    if (offered.contains(device)) return device;
+    for (final code in [_appLanguage, PlatformDispatcher.instance.locale.languageCode]) {
+      if (code != null && offered.contains(code)) return code;
+    }
     return current.defaultLanguage ?? offered.first;
   }
 
   set language(String value) => _language = value;
+
+  /// Takes the app's language from the widget tree ([ziAppLanguageOf]). The
+  /// SDK's buttons call it as they draw, and they draw again when the app's
+  /// language changes, so the next turn is in the new one.
+  void readAppLanguage(BuildContext context) => _appLanguage = ziAppLanguageOf(context);
 
   /// A Zehn user token from the app's backend; null goes back to no token
   /// (the user is known by the install id).

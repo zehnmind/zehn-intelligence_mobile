@@ -129,6 +129,9 @@ class _ZiFloatingAssistantState extends State<ZiFloatingAssistant> {
   Widget build(BuildContext context) {
     final runtime = ZiRuntime.instance;
     if (runtime == null) return const SizedBox.shrink();
+    // Before any early return: it also redraws the button when the app's
+    // language changes, even while the chat is open.
+    runtime.readAppLanguage(context);
     return ValueListenableBuilder<bool>(
       valueListenable: runtime.available,
       builder: (context, available, _) {

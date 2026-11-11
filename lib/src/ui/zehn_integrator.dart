@@ -54,6 +54,7 @@ class ZehnAiButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final runtime = ZiRuntime.instance;
     if (runtime != null) {
+      runtime.readAppLanguage(context);
       // Hidden while the console has nothing published for the app.
       return ValueListenableBuilder<bool>(
         valueListenable: runtime.available,

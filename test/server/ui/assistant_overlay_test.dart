@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:zehn_intelligence/src/server/app_route.dart';
@@ -9,6 +10,7 @@ import 'package:zehn_intelligence/src/server/runtime.dart';
 import 'package:zehn_intelligence/src/server/ui/assistant_overlay.dart';
 import 'package:zehn_intelligence/src/server/ui/chat_sheet.dart';
 import 'package:zehn_intelligence/src/server/ui/launcher_button.dart';
+import 'package:zehn_intelligence/src/server/ui/strings.dart';
 
 import '../../support/test_info.dart';
 
@@ -102,5 +104,55 @@ void main() {
     );
     await openInRealZone(tester, '/map');
     expect(find.text('map'), findsOneWidget);
+  });
+
+  group('the chat speaks the language the app is shown in', () {
+    // The test phone is en_US. The app keeps its own language and hands it to
+    // `MaterialApp(locale: …)`, as an app with its own language setting does.
+    Widget app(Locale locale) => MaterialApp(
+      locale: locale,
+      supportedLocales: const [Locale('uz'), Locale('ru'), Locale('en')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      home: const Text('the app'),
+    );
+    String? label(WidgetTester tester) => tester.widget<ZiLauncherButton>(find.byType(ZiLauncherButton)).label;
+
+    Future<void> showButton(WidgetTester tester, Widget app) async {
+      await tester.pumpWidget(app);
+      ZiAssistantOverlay.install();
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets("the app's language, not the phone's", (tester) async {
+      final runtime = await startRuntime(tester);
+      await showButton(tester, app(const Locale('ru')));
+      expect(runtime.language, 'ru');
+      expect(label(tester), ZiStrings.of('ru').ask);
+    });
+
+    testWidgets('a change of language in the app reaches the next turn', (tester) async {
+      final runtime = await startRuntime(tester);
+      await showButton(tester, app(const Locale('ru')));
+      await tester.pumpWidget(app(const Locale('uz')));
+      await tester.pump();
+      expect(runtime.language, 'uz');
+      expect(label(tester), ZiStrings.of('uz').ask);
+    });
+
+    testWidgets("ZehnIntelligence.setLanguage still wins over the app's language", (tester) async {
+      final runtime = await startRuntime(tester);
+      runtime.language = 'en';
+      await showButton(tester, app(const Locale('ru')));
+      expect(runtime.language, 'en');
+    });
+
+    testWidgets('an app that never set a language leaves it to the phone', (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: Text('the app')));
+      // Flutter's own en_US, not a choice the app made.
+      expect(ziAppLanguageOf(tester.element(find.text('the app'))), isNull);
+      await tester.pumpWidget(app(const Locale('uz')));
+      expect(ziAppLanguageOf(tester.element(find.text('the app'))), 'uz');
+    });
   });
 }
