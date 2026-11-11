@@ -161,8 +161,24 @@ The app can also throw its own code, e.g. `ZiToolError('not_signed_in', 'Ask the
 
 Most tools are requests the server builds and the SDK sends through the app's Dio, and most
 cards are templates the server sends. Some things only the app's code can do: read data that
-ships with the app, or draw a widget no template can (a map). The app registers those, before
-or after `ZehnIntelligence.start`:
+ships with the app, or draw a widget no template can (a map). The app registers those, by name
+and handler, in the same call that starts the assistant:
+
+```dart
+await ZehnIntelligence.start(
+  dio: () => di<Dio>(),
+  handlers: {'map.route': (args) => di<MapTools>().route(args)},
+  builders: {'map_route': buildMapRouteCard},
+);
+```
+
+What each is for, what its arguments mean and the examples are the developer's words in the
+console, where the code analysis drafts them from this code: the names, and what each handler
+reads from its map (`args['to'] as String` is a required string, `args['floor'] as int?` an
+optional integer; the doc comment of a handler is what the draft's description is written
+from). They can also be registered with `ZehnIntelligence.registerTool` /
+`registerComponent` (before or after `start`), which take the words and the arguments in the
+call itself, to be read as written, and a component's `kind: 'sheet'`:
 
 ```dart
 ZehnIntelligence.registerTool(
@@ -188,7 +204,8 @@ ZehnIntelligence.registerComponent(
 - **The server still decides what the assistant can do.** A registered tool reaches the model
   only once it is in the app's catalog and published. The console's code analysis reads these
   calls from the source (it never runs the app) and drafts the tool and the component with the
-  same names, descriptions and arguments, so write every value as a literal.
+  same names and arguments (and the descriptions, when the call declares them: write every
+  value as a literal).
 - **Names.** A tool: dotted lower case, one to four parts, at most 48 characters, not starting
   with `ui` or `zi` (`map.route`). A component: one lower-case word, at most 40 (`map_route`).
   A debug build refuses another name when it is registered; a release build never sends it.

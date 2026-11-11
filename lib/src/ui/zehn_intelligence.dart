@@ -469,8 +469,28 @@ class ZehnIntelligence {
   /// throws: when the assistant can't start (no file, another app's file, no
   /// key, the Dio not ready) it logs why and the app runs on without it. It
   /// returns null.
+  ///
+  /// **[handlers]** and **[builders]** are the app's own tools and widgets by
+  /// name, registered in the same call (what [registerTool] and
+  /// [registerComponent] do for a name and a handler):
+  ///
+  /// ```dart
+  /// await ZehnIntelligence.start(
+  ///   dio: () => di<Dio>(),
+  ///   handlers: {'map.locate': (args) => di<MapTools>().locate(args)},
+  ///   builders: {'map_spot': buildMapSpotCard},
+  /// );
+  /// ```
+  ///
+  /// What each is for, its arguments and its examples are in the console,
+  /// which drafts them from this code: the analysis reads each key and what
+  /// its handler reads from its map (`args['to'] as String`). A component
+  /// that is shown in a sheet, or a tool that declares its own arguments,
+  /// is registered with [registerComponent] / [registerTool] instead.
   static Future<ZehnIntelligence?> start({
     FutureOr<Dio> Function()? dio,
+    Map<String, Future<Map<String, Object?>> Function(Map<String, Object?>)>? handlers,
+    Map<String, Widget Function(BuildContext, Map<String, Object?>, ZiComponentController)>? builders,
     String? appName,
     AgentProfile? profile,
     String apiKey = '',
@@ -495,6 +515,8 @@ class ZehnIntelligence {
     String textExample = 'Your order will arrive tomorrow.',
     AgentLog? log,
   }) async {
+    handlers?.forEach(registerTool);
+    builders?.forEach(registerComponent);
     if (dio != null) {
       await _startFromFile(dio);
       return null;

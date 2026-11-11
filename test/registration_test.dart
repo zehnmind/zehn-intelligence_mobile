@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/zehn_intelligence.dart';
@@ -42,6 +43,23 @@ void main() {
       props: const {'to': ZiArg.string('`card.to` from map.route', required: true)},
     );
     expect(ZehnIntelligence.registeredComponents.keys, ['map_route']);
+  });
+
+  test('start takes the tools and the widgets by name, then never throws without the console file', () async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    final started = await ZehnIntelligence.start(
+      dio: Dio.new,
+      handlers: {
+        'map.locate': (args) async => {'target': args['target']},
+        'map.route': (args) async => const {},
+      },
+      builders: {'map_spot': (context, props, controller) => const SizedBox.shrink()},
+    );
+    expect(started, isNull);
+    expect(ZehnIntelligence.registeredTools.keys, ['map.locate', 'map.route']);
+    expect(await ZehnIntelligence.registeredTools['map.locate']!({'target': 'Zara'}), {'target': 'Zara'});
+    expect(ZehnIntelligence.registeredToolArgs, isEmpty);
+    expect(ZehnIntelligence.registeredComponents.keys, ['map_spot']);
   });
 
   test('a name the catalog cannot hold is refused when it is registered', () {
