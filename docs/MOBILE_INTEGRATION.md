@@ -371,7 +371,7 @@ Before the stream starts, an error is a JSON body with an HTTP status. After the
 | `turn_in_progress` | 409 | A turn is already running. Never send two at once. |
 | `form_not_found` | 404 | The form is not in this chat. It locks as "Not answered". |
 | `form_used` | 409 | The form was already answered or closed; `params.status` is `submitted` or `dismissed`. The form takes that state. |
-| `form_invalid` | 422 | The answers failed the form's checks. `params.errors` is a list of `{"field": "phone", "rule": "phone"}` (`rule` is `number`, `email`, `phone`, `date`, `option`, `required`, `length`, `range`, `items`, `type` or `unknown_field`); the SDK puts each on its field and the form stays open. |
+| `form_invalid` | 422 | The answers failed the form's checks. `params.errors` is a list of `{"field": "phone", "rule": "phone"}` (`rule` is `number`, `email`, `phone`, `date`, `option`, `required`, `length`, `range`, `items`, `type` or `unknown_field`); the SDK puts each on its field and the form stays open. A rule the phone has no words for (`type`, `unknown_field`), or a field that is hidden or not in the form, is not shown on a field; the form says "Not sent. Try again." instead. |
 | `turn_expired` | 409 or event | The results came too late. "That took too long, ask again." |
 | `turn_not_paused` | 409 | The results were already taken (a retry after a network drop). End the turn as `stream_interrupted`. |
 | `turn_not_found`, `invalid_tool_results` | 404 / 400 | SDK bug: unknown or repeated `call_id` |

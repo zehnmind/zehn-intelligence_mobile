@@ -94,6 +94,41 @@ void main() {
     expect(tester.widget<Text>(find.byKey(const ValueKey('zi-error-city'))).data, 'Choose at least 2');
   });
 
+  testWidgets('a chip is 40 px tall to look at; what takes its tap is 48 px high', (tester) async {
+    final p = await pumpForm(tester, pick({'look': 'chips'}));
+    final chip = tester.getRect(option('bukhara'));
+    expect(chip.height, 40);
+    await tester.tapAt(Offset(chip.center.dx, chip.top - 3));
+    await tester.pump();
+    expect(p.draft.raw['city'], 'bukhara');
+    await tester.tapAt(Offset(chip.center.dx, chip.bottom + 3));
+    await tester.pump();
+    expect(p.draft.raw.containsKey('city'), isFalse);
+  });
+
+  testWidgets('the dropdown sheet closing does not give the focus, and the keyboard, back to a text field', (
+    tester,
+  ) async {
+    await pumpForm(tester, [
+      {
+        'id': 'root',
+        'component': 'Column',
+        'children': ['name', 'city'],
+      },
+      {'id': 'name', 'component': 'TextField', 'field': 'name', 'label': 'Name'},
+      ...pick(const {}).where((c) => c['id'] == 'city'),
+    ]);
+    await tester.tap(editable('name'));
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tester.tap(find.text('Choose'));
+    await tester.pumpAndSettle();
+    await tester.tap(option('samarkand'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<EditableText>(editable('name')).focusNode.hasFocus, isFalse);
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
   testWidgets('read-only: the picked labels, or —; sending takes no tap', (tester) async {
     final p = await pumpForm(
       tester,
@@ -138,21 +173,21 @@ void main() {
     await pumpForm(tester, pick(const {}), prefill: {'city': 'bukhara'});
     await tester.tap(find.text('Bukhara'));
     await tester.pumpAndSettle();
-    expect(tester.getSemantics(option('bukhara')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: true));
-    expect(tester.getSemantics(option('samarkand')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: false));
+    expect(tester.getSemantics(option('bukhara')), isSemantics(isButton: true, hasCheckedState: true, isChecked: true));
+    expect(tester.getSemantics(option('samarkand')), isSemantics(isButton: true, hasCheckedState: true, isChecked: false));
     Navigator.of(tester.element(option('bukhara'))).pop();
     await tester.pumpAndSettle();
     // Several rows look like checkboxes.
     await pumpForm(tester, pick({'look': 'list', 'multiple': true}), prefill: {'city': ['bukhara']});
-    expect(tester.getSemantics(option('bukhara')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: true));
-    expect(tester.getSemantics(option('tashkent')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: false));
+    expect(tester.getSemantics(option('bukhara')), isSemantics(isButton: true, hasCheckedState: true, isChecked: true));
+    expect(tester.getSemantics(option('tashkent')), isSemantics(isButton: true, hasCheckedState: true, isChecked: false));
     // One chip is selected; several chips are checked.
     await pumpForm(tester, pick({'look': 'chips'}), prefill: {'city': 'bukhara'});
-    expect(tester.getSemantics(option('bukhara')), containsSemantics(isButton: true, hasSelectedState: true, isSelected: true));
-    expect(tester.getSemantics(option('tashkent')), containsSemantics(isButton: true, hasSelectedState: true, isSelected: false));
+    expect(tester.getSemantics(option('bukhara')), isSemantics(isButton: true, hasSelectedState: true, isSelected: true));
+    expect(tester.getSemantics(option('tashkent')), isSemantics(isButton: true, hasSelectedState: true, isSelected: false));
     await pumpForm(tester, pick({'look': 'chips', 'multiple': true}), prefill: {'city': ['bukhara']});
-    expect(tester.getSemantics(option('bukhara')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: true));
-    expect(tester.getSemantics(option('tashkent')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: false));
+    expect(tester.getSemantics(option('bukhara')), isSemantics(isButton: true, hasCheckedState: true, isChecked: true));
+    expect(tester.getSemantics(option('tashkent')), isSemantics(isButton: true, hasCheckedState: true, isChecked: false));
     handle.dispose();
   });
 

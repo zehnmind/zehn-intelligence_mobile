@@ -68,6 +68,27 @@ void main() {
     handle.dispose();
   });
 
+  testWidgets('the calendar closing does not give the focus, and the keyboard, back to a text field', (tester) async {
+    await pumpForm(tester, [
+      {
+        'id': 'root',
+        'component': 'Column',
+        'children': ['name', 'date'],
+      },
+      {'id': 'name', 'component': 'TextField', 'field': 'name', 'label': 'Name'},
+      {'id': 'date', 'component': 'DateField', 'field': 'date', 'label': 'Date'},
+    ], today: day);
+    await tester.tap(editable('name'));
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tester.tap(find.text('Choose'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<EditableText>(editable('name')).focusNode.hasFocus, isFalse);
+    expect(tester.testTextInput.isVisible, isFalse);
+  });
+
   testWidgets('the form leaves pending while the calendar is open: the calendar closes and the draft stays', (
     tester,
   ) async {

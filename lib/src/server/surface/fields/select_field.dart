@@ -134,9 +134,9 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
         listenable: draft,
         builder: (_, _) {
           final now = picked(draft.raw[field]);
+          // Each chip's tap area reaches 4 px past it, so the rows still look 8 px apart.
           return Wrap(
             spacing: 8,
-            runSpacing: 8,
             children: [
               for (final o in options)
                 _chip(
@@ -163,6 +163,8 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
         child: InkWell(
           onTap: open
               ? () {
+                  // Else a text field that had focus gets it back when the sheet closes, and the keyboard reopens.
+                  FocusManager.instance.primaryFocus?.unfocus();
                   showModalBottomSheet<void>(
                     context: context,
                     backgroundColor: t.color('surface', Colors.black),
@@ -239,20 +241,35 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
       button: true,
       checked: multiple ? on : null,
       selected: multiple ? null : on,
-      child: Material(
-        color: on ? t.color('accent', Colors.orange) : t.color('chip', Colors.white10),
-        borderRadius: BorderRadius.circular(t.radius('chip', 20)),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          key: key,
-          onTap: onTap,
-          child: Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            alignment: Alignment.center,
-            child: Text(
-              label,
-              style: t.text('body', color: on ? t.color('on_accent', Colors.white) : t.color('on_surface', Colors.white)),
+      // 40 px to look at, 48 px to tap: the 4 px above and below take the tap too.
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        excludeFromSemantics: true,
+        onTap: onTap,
+        child: SizedBox(
+          height: 48,
+          child: Align(
+            widthFactor: 1,
+            child: Material(
+              color: on ? t.color('accent', Colors.orange) : t.color('chip', Colors.white10),
+              borderRadius: BorderRadius.circular(t.radius('chip', 20)),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                key: key,
+                onTap: onTap,
+                child: Container(
+                  height: 40,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  alignment: Alignment.center,
+                  child: Text(
+                    label,
+                    style: t.text(
+                      'body',
+                      color: on ? t.color('on_accent', Colors.white) : t.color('on_surface', Colors.white),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),

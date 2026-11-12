@@ -642,6 +642,14 @@ void main() {
       expect((form().status, cubit.state.busy), (ZiFormStatus.submitted, false));
       expect(cubit.state.items.whereType<ZiUserItem>(), hasLength(1)); // no bubble for the form
     });
+    test('what is sent is what was checked, whatever changes while the spoken answer stops', () async {
+      await shown();
+      turns.script([started, done]);
+      final sending = cubit.submitForm('f1');
+      cubit.formDraft('f1')!.set('name', 'Vali');
+      await sending;
+      expect((turns.starts.last.input['values']! as Map)['name'], 'Ali');
+    });
     test('two quick taps on Send start one turn', () async {
       await shown();
       turns.script([started, done]);

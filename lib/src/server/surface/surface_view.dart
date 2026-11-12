@@ -14,7 +14,7 @@ import 'values.dart';
 /// The only things a component's tap may ask for.
 const ziAllowedActions = {'open_route', 'ask', 'open_url', 'submit'};
 
-/// Catalog `zehn.basic.v0`: what this build can draw.
+/// Catalog `zehn.basic.v1`: what this build can draw.
 const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider', 'Stack', 'Wrap', 'Progress', 'Avatar', 'TextField', 'Checkbox', 'Switch', 'Select', 'DateField'};
 
 /// Whether this build has a widget for every block of [surface]'s template.

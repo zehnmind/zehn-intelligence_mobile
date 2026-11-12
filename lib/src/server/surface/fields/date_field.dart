@@ -65,6 +65,8 @@ class _ZiDateFieldBlockState extends State<ZiDateFieldBlock> {
     final held = ziDateOf(draft.raw[field], today: draft.today) ?? draft.today;
     final initial = held.isBefore(first) ? first : (held.isAfter(last) ? last : held);
 
+    // Else a text field that had focus gets it back when the calendar closes, and the keyboard reopens.
+    FocusManager.instance.primaryFocus?.unfocus();
     final navigator = Navigator.of(context);
     final route = DialogRoute<DateTime>(
       context: context,

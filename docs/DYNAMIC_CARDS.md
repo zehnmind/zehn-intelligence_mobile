@@ -166,7 +166,11 @@ What the SDK does:
 - Draws the card in the chat, under the assistant's text, with the fields in `props.form` filled in.
   What the person types is kept in the chat, not in the card: it survives scrolling, a switch to
   voice or history and back, and closing and reopening the chat (not the app being killed).
-  Reopening the conversation that is already open keeps it too.
+  Reopening the conversation that is already open keeps it too, and so does starting a new chat:
+  what was typed into a form still waiting comes back when that conversation is opened again from
+  the history. Signing out discards it.
+- While a form waits for the person, the follow-up suggestions are not shown: a stray tap on one
+  would start a turn and lock the form without its answers.
 - A tap on the form's `submit` button (section 8) checks every visible field (section 7.2). A field
   that fails shows its message under it, and the first one is scrolled into view and focused. If all
   pass, the button shows progress, the fields turn off, and the SDK starts a turn:
@@ -198,7 +202,9 @@ A form is answered **once**, and what happens to it is fixed:
   again with everything typed kept and the line "Not sent. Try again.". The chat's own Retry sends
   the same answers again.
 - The backend's own refusals: `form_invalid` puts its messages on the fields it names and the form
-  stays `pending`; `form_used` takes the state the answer names (`submitted` or `dismissed`);
+  stays `pending` (a rule the phone has no words for, `type` or `unknown_field`, or a field that is
+  hidden or not in the form, is not shown on a field; the form says "Not sent. Try again." instead);
+  `form_used` takes the state the answer names (`submitted` or `dismissed`);
   `form_not_found` locks it as `dismissed`.
 - When the conversation cannot go on (`conversation_full`, `conversation_spec_changed`,
   `conversation_not_found`) the form locks as `dismissed`: a form is not carried into a new chat.
@@ -363,7 +369,7 @@ Those blocks redraw as the person types.
 
 | Field | Value at `/form/<field>` |
 |---|---|
-| `TextField` | The text as typed; a number for `input: number`. |
+| `TextField` | The text, trimmed; absent when empty. For `input: number`, a number once the text is one. |
 | `Checkbox`, `Switch` | `true` or `false`. |
 | `Select` | The option's `value`; a list of them when `multiple`. |
 | `DateField` | `YYYY-MM-DD`. |

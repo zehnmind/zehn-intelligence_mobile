@@ -212,6 +212,8 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     final draft = _forms[formId];
     if (form == null || form.status != ZiFormStatus.pending || draft == null || !ziDraws(draft.surface)) return;
     if (!draft.check()) return;
+    // Read in the same step as the check, so what is sent is what was checked.
+    final values = draft.values;
     draft.markNotSent(false);
     _sending = formId;
     // Set before anything is awaited, so a second tap finds it no longer pending.
@@ -225,7 +227,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     final input = TurnInput.form(
       conversationId: conversationId,
       formId: formId,
-      values: draft.values,
+      values: values,
       language: _language(),
       utcOffsetMinutes: _utcOffset(),
     );
