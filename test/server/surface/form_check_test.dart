@@ -2,6 +2,7 @@ import 'dart:collection';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/surface/form_check.dart';
+import 'package:zehn_intelligence/src/server/surface/form_words.dart';
 import 'package:zehn_intelligence/src/server/surface/surface.dart';
 import 'package:zehn_intelligence/src/server/surface/values.dart';
 
@@ -244,6 +245,12 @@ void main() {
     ]);
     expect(ziFormValues(nested, {'s': false, 't': 'x'}).hidden, {'t', 'm'});
     expect(ziFormValues(nested, {'s': true, 't': '  ', 'm': <String>[]}).values, {'s': true});
+  });
+
+  test('every rule the phone can report has words', () {
+    for (final rule in ziCheckRules) {
+      expect(ziFormWords, contains(rule), reason: rule);
+    }
   });
 }
 

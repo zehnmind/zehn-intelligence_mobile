@@ -7,9 +7,6 @@ import 'surface.dart';
 
 enum ZiFormStatus { pending, sending, submitted, dismissed }
 
-/// The rules a server can name for a field; each has words in `ziFormWords`.
-const _ruleWords = {'required', 'length', 'range', 'items', 'number', 'email', 'phone', 'date', 'option'};
-
 /// What a person has typed into one form, which fields they left, and what failed.
 class ZiFormDraft extends ChangeNotifier {
   ZiFormDraft(this.surface, {Map<String, Object?> prefill = const {}, DateTime Function()? today})
@@ -102,17 +99,26 @@ class ZiFormDraft extends ChangeNotifier {
     return true;
   }
 
-  /// Shows what the server refused, by field. A rule with no words, or for no field of the form,
-  /// cannot be shown against a field: the form says Not sent instead.
+  /// Shows what the server refused, by field, and asks to show the first such field in drawn order. A rule the phone
+  /// cannot report, or one for a field that is not shown or has nothing to say it with, is not kept: the form says
+  /// Not sent instead.
   void serverErrors(Map<String, String> ruleByField) {
     _server.clear();
     for (final entry in ruleByField.entries) {
       final spec = _fields[entry.key];
-      if (spec == null || !_ruleWords.contains(entry.value)) {
+      final failure = spec == null || hidden.contains(entry.key) || !ziCheckRules.contains(entry.value)
+          ? null
+          : _failure(spec, entry.value, _raw[entry.key], today);
+      if (failure == null) {
         _notSent = true;
-        continue;
+      } else {
+        _server[entry.key] = failure;
       }
-      _server[entry.key] = _failure(spec, entry.value);
+    }
+    final shown = _fields.keys.where(_server.containsKey);
+    if (shown.isNotEmpty) {
+      _focusField = shown.first;
+      _focusTick++;
     }
     notifyListeners();
   }
@@ -126,24 +132,26 @@ class ZiFormDraft extends ChangeNotifier {
 
 DateTime _dayOf(DateTime t) => DateTime(t.year, t.month, t.day);
 
-/// The failure for [rule], with `min`, `max` and `message` from the field's own check of it when it lists one.
-ZiCheckFailure _failure(Map<String, Object?> spec, String rule) {
+/// The failure to show for [rule] on [spec], or null when it cannot be said. What the field holds now is
+/// believed first; else the field's own check of the rule, when it has bounds to name (or needs none); else,
+/// for `length`, the limit every text field is held to.
+ZiCheckFailure? _failure(Map<String, Object?> spec, String rule, Object? raw, DateTime today) {
+  final own = ziCheckField(spec, raw, today: today);
+  if (own != null && own.rule == rule) return own;
   final checks = spec['checks'];
   if (checks is List) {
     for (final c in checks) {
       if (c is Map && c['rule'] == rule) {
-        return ZiCheckFailure(
-          rule,
-          min: c['min'] is num ? c['min'] as num : null,
-          max: c['max'] is num ? c['max'] as num : null,
-          message: c['message'],
-        );
+        final min = c['min'] is num ? c['min'] as num : null;
+        final max = c['max'] is num ? c['max'] as num : null;
+        if (min != null || max != null || !const {'length', 'range', 'items'}.contains(rule)) {
+          return ZiCheckFailure(rule, min: min, max: max, message: c['message']);
+        }
       }
     }
   }
-  // The length every text field is held to, so its words have a number to show.
   if (rule == 'length') return ZiCheckFailure(rule, max: spec['maxLength'] is num ? spec['maxLength'] as num : 500);
-  return ZiCheckFailure(rule);
+  return const {'range', 'items'}.contains(rule) ? null : ZiCheckFailure(rule);
 }
 
 /// What [spec] starts out holding for [given], or null when [given] is not of the type the field takes.

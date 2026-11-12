@@ -5,6 +5,9 @@ import 'values.dart';
 /// The blocks a form reads a value from. Each is a leaf.
 const ziFieldBlocks = {'TextField', 'Checkbox', 'Switch', 'Select', 'DateField'};
 
+/// The rules the phone can report; each has words in `ziFormWords`.
+const ziCheckRules = {'required', 'length', 'range', 'items', 'number', 'email', 'phone', 'date', 'option'};
+
 const _defaultMaxLength = 500;
 
 /// The first rule a value breaks.
