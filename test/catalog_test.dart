@@ -13,7 +13,7 @@ import 'package:zehn_intelligence/src/version.dart';
 
 /// What the file lists but the renderer does not draw yet.
 const _notYet = (
-  blocks: {'Checkbox', 'Switch', 'Select', 'DateField'},
+  blocks: {'Select', 'DateField'},
   actions: <String>{},
   common: <String>{},
 );
