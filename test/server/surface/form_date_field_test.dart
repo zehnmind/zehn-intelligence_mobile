@@ -57,6 +57,17 @@ void main() {
     expect(find.text('14 ноября'), findsOneWidget);
   });
 
+  testWidgets('a screen reader hears the field as its label and the date it holds', (tester) async {
+    final handle = tester.ensureSemantics();
+    await pumpForm(tester, when(const {}), prefill: {'date': '2026-11-14'}, today: day);
+    final node = tester.getSemantics(find.text('Nov 14'));
+    expect(node.label, 'Date');
+    expect(node.value, contains('Nov 14'));
+    await pumpForm(tester, when(const {}), today: day);
+    expect(tester.getSemantics(find.text('Choose')).value, contains('Choose'));
+    handle.dispose();
+  });
+
   testWidgets('the form leaves pending while the calendar is open: the calendar closes and the draft stays', (
     tester,
   ) async {

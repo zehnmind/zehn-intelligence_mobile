@@ -119,6 +119,43 @@ void main() {
     expect(option('bukhara'), findsNothing);
   });
 
+  testWidgets('a screen reader hears the dropdown as its label and what it shows', (tester) async {
+    final handle = tester.ensureSemantics();
+    await pumpForm(tester, pick(const {}), prefill: {'city': 'bukhara'});
+    final node = tester.getSemantics(find.text('Bukhara'));
+    expect(node.label, 'City');
+    expect(node.value, contains('Bukhara'));
+    await pumpForm(tester, pick(const {}));
+    expect(tester.getSemantics(find.text('Choose')).value, contains('Choose'));
+    handle.dispose();
+  });
+
+  testWidgets('a screen reader hears each option row and chip as a button that says whether it is picked', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    // A single dropdown's rows look like radio buttons.
+    await pumpForm(tester, pick(const {}), prefill: {'city': 'bukhara'});
+    await tester.tap(find.text('Bukhara'));
+    await tester.pumpAndSettle();
+    expect(tester.getSemantics(option('bukhara')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: true));
+    expect(tester.getSemantics(option('samarkand')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: false));
+    Navigator.of(tester.element(option('bukhara'))).pop();
+    await tester.pumpAndSettle();
+    // Several rows look like checkboxes.
+    await pumpForm(tester, pick({'look': 'list', 'multiple': true}), prefill: {'city': ['bukhara']});
+    expect(tester.getSemantics(option('bukhara')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: true));
+    expect(tester.getSemantics(option('tashkent')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: false));
+    // One chip is selected; several chips are checked.
+    await pumpForm(tester, pick({'look': 'chips'}), prefill: {'city': 'bukhara'});
+    expect(tester.getSemantics(option('bukhara')), containsSemantics(isButton: true, hasSelectedState: true, isSelected: true));
+    expect(tester.getSemantics(option('tashkent')), containsSemantics(isButton: true, hasSelectedState: true, isSelected: false));
+    await pumpForm(tester, pick({'look': 'chips', 'multiple': true}), prefill: {'city': ['bukhara']});
+    expect(tester.getSemantics(option('bukhara')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: true));
+    expect(tester.getSemantics(option('tashkent')), containsSemantics(isButton: true, hasCheckedState: true, isChecked: false));
+    handle.dispose();
+  });
+
   testWidgets('the form is locked while the dropdown sheet is open: the sheet closes and the draft stays', (
     tester,
   ) async {

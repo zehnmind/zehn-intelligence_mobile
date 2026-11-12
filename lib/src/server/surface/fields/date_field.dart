@@ -98,6 +98,8 @@ class _ZiDateFieldBlockState extends State<ZiDateFieldBlock> {
     final onSurface = t.color('on_surface', Colors.white);
     final muted = t.color('muted', Colors.white70);
     final range = _range(draft.today);
+    // What the field shows, read out beside the label; the card is drawn again as the draft changes.
+    String showing(String text) => text.isEmpty ? ziFormWord('choose', values.language) : text;
     final control = ListenableBuilder(
       listenable: draft,
       builder: (_, _) {
@@ -117,10 +119,7 @@ class _ZiDateFieldBlockState extends State<ZiDateFieldBlock> {
                   children: [
                     Expanded(
                       child: ExcludeSemantics(
-                        child: Text(
-                          empty ? ziFormWord('choose', values.language) : text,
-                          style: t.text('body', color: empty ? muted : onSurface),
-                        ),
+                        child: Text(showing(text), style: t.text('body', color: empty ? muted : onSurface)),
                       ),
                     ),
                     Icon(Icons.calendar_today_outlined, color: muted),
@@ -132,6 +131,13 @@ class _ZiDateFieldBlockState extends State<ZiDateFieldBlock> {
         );
       },
     );
-    return ZiFieldFrame(spec: spec, values: values, theme: t, form: form, child: control);
+    return ZiFieldFrame(
+      spec: spec,
+      values: values,
+      theme: t,
+      form: form,
+      value: showing(shown(draft.raw[field])),
+      child: control,
+    );
   }
 }

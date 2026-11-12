@@ -5,8 +5,8 @@ import '../form_draft.dart';
 import '../surface.dart';
 import '../values.dart';
 
-/// Around every field: the label above it, the hint or the error under it, its name for a
-/// screen reader, and "scroll here" when a failed Send names this field.
+/// Around every field: the label above it, the hint or the error under it, its name (and what it
+/// shows) for a screen reader, and "scroll here" when a failed Send names this field.
 class ZiFieldFrame extends StatefulWidget {
   const ZiFieldFrame({
     super.key,
@@ -17,6 +17,7 @@ class ZiFieldFrame extends StatefulWidget {
     required this.child,
     this.focus,
     this.labelAbove = true,
+    this.value,
   });
 
   final Map<String, Object?> spec;
@@ -30,6 +31,10 @@ class ZiFieldFrame extends StatefulWidget {
 
   /// False for a block that draws its label beside its control.
   final bool labelAbove;
+
+  /// What a field that is not an edit box shows (the picked labels, a date, or its placeholder), read out
+  /// beside its label.
+  final String? value;
 
   @override
   State<ZiFieldFrame> createState() => _ZiFieldFrameState();
@@ -76,7 +81,7 @@ class _ZiFieldFrameState extends State<ZiFieldFrame> {
       spacing: 6,
       children: [
         if (widget.labelAbove && label.isNotEmpty) ExcludeSemantics(child: Text(label, style: muted)),
-        Semantics(container: true, label: label, hint: under, child: widget.child),
+        Semantics(container: true, label: label, value: widget.value, hint: under, child: widget.child),
         if (error != null)
           Semantics(
             liveRegion: true,

@@ -125,6 +125,8 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
     }
 
     final Widget control;
+    // What the dropdown shows, read out beside the label; rows and chips each say whether they are picked.
+    String? showing;
     if (look == 'list') {
       control = ListenableBuilder(listenable: draft, builder: (c, _) => rows(c));
     } else if (look == 'chips') {
@@ -140,6 +142,7 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
                 _chip(
                   o.label,
                   now.contains(o.value),
+                  multiple,
                   ValueKey('zi-option-${o.value}'),
                   open ? () => toggle(o.value) : null,
                   t,
@@ -152,6 +155,7 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
       final muted = t.color('muted', Colors.white70);
       final text = shown(picked(draft.raw[field]));
       final empty = text.isEmpty;
+      showing = empty ? (placeholder.isEmpty ? ziFormWord('choose', values.language) : placeholder) : text;
       control = Material(
         color: t.color('chip', Colors.white10),
         borderRadius: BorderRadius.circular(t.radius('button', 16)),
@@ -182,10 +186,7 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
                 children: [
                   Expanded(
                     child: ExcludeSemantics(
-                      child: Text(
-                        empty ? (placeholder.isEmpty ? ziFormWord('choose', values.language) : placeholder) : text,
-                        style: t.text('body', color: empty ? muted : onSurface),
-                      ),
+                      child: Text(showing, style: t.text('body', color: empty ? muted : onSurface)),
                     ),
                   ),
                   Icon(Icons.expand_more, color: muted),
@@ -196,49 +197,63 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
         ),
       );
     }
-    return ZiFieldFrame(spec: spec, values: values, theme: t, form: form, child: control);
+    return ZiFieldFrame(spec: spec, values: values, theme: t, form: form, value: showing, child: control);
   }
 
   Widget _row(String label, bool on, bool multiple, Key key, VoidCallback? onTap, Color onSurface, Color accent) {
     final icon = multiple
         ? (on ? Icons.check_box : Icons.check_box_outline_blank)
         : (on ? Icons.radio_button_checked : Icons.radio_button_unchecked);
-    return InkWell(
-      key: key,
-      onTap: onTap,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 48),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            spacing: 12,
-            children: [
-              Icon(icon, color: on ? accent : onSurface),
-              Expanded(
-                child: Text(label, style: theme.text('body', color: onSurface)),
-              ),
-            ],
+    // Read out as the checkbox or radio button it looks like.
+    return Semantics(
+      container: true,
+      button: true,
+      checked: on,
+      inMutuallyExclusiveGroup: !multiple,
+      child: InkWell(
+        key: key,
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              spacing: 12,
+              children: [
+                Icon(icon, color: on ? accent : onSurface),
+                Expanded(
+                  child: Text(label, style: theme.text('body', color: onSurface)),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _chip(String label, bool on, Key key, VoidCallback? onTap, ZiTheme t) {
-    return Material(
-      color: on ? t.color('accent', Colors.orange) : t.color('chip', Colors.white10),
-      borderRadius: BorderRadius.circular(t.radius('chip', 20)),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        key: key,
-        onTap: onTap,
-        child: Container(
-          height: 40,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: t.text('body', color: on ? t.color('on_accent', Colors.white) : t.color('on_surface', Colors.white)),
+  Widget _chip(String label, bool on, bool multiple, Key key, VoidCallback? onTap, ZiTheme t) {
+    // Several chips are checked, like filter chips; one of them is selected, like a choice chip.
+    return Semantics(
+      container: true,
+      button: true,
+      checked: multiple ? on : null,
+      selected: multiple ? null : on,
+      child: Material(
+        color: on ? t.color('accent', Colors.orange) : t.color('chip', Colors.white10),
+        borderRadius: BorderRadius.circular(t.radius('chip', 20)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: key,
+          onTap: onTap,
+          child: Container(
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            alignment: Alignment.center,
+            child: Text(
+              label,
+              style: t.text('body', color: on ? t.color('on_accent', Colors.white) : t.color('on_surface', Colors.white)),
+            ),
           ),
         ),
       ),
