@@ -3,7 +3,7 @@ description: >-
   An in-app AI assistant for Flutter apps, with voice. The model only proposes;
   your app validates, asks, runs its own repositories and draws its own
   widgets.
-version: 0.6.0
+version: 0.7.0
 publish_to: none
 
 environment:

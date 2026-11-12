@@ -36,7 +36,7 @@ void main() {
     expect(h['x-zi-package'], 'uz.example.app');
     expect(h['x-zi-app-version'], '1.2.0+5');
     expect(h['x-zi-install-id'], '01234567-89ab-4def-8123-456789abcdef');
-    expect(h['x-zi-sdk-version'], '0.6.0');
+    expect(h['x-zi-sdk-version'], '0.7.0');
     // With it the server treats the build as one that pins a spec.
     expect(h.containsKey('x-zi-spec-version'), isFalse);
     expect(h['x-zi-platform'], 'ios');

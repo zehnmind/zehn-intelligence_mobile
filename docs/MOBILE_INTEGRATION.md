@@ -1,7 +1,7 @@
 # Zehn Intelligence: Mobile SDK API
 
 What the SDK calls on our backend and how to handle each answer.
-Updated 2026-11-06, from the backend's `main` branch.
+Updated 2026-11-12, from the backend's `main` branch.
 
 ## The basics
 
@@ -108,11 +108,27 @@ Spoken:
 | `input.text` | 1 to 4000 characters, after trimming. |
 | `input.format` | `m4a` (recommended: AAC on both platforms), `aac`, `mp3`, `wav`, `ogg`, `opus`, `webm` or `flac`. |
 | `input.data` | The whole recording, base64. At most 1 MiB decoded, about a minute of AAC at 64 kbit/s. |
+| `input.form_id`, `input.values` | A filled-in form (below). |
 | `language` | The app's current UI language: `uz`, `ru`, `en`... |
 | `utc_offset_minutes` | The phone's offset from UTC. Tashkent is `300`. Optional. |
 | `voice_reply` | `true` speaks the answer (`audio` events). It stays on for the whole turn: no need to send it again with tool results. |
 | `tools` | The names of the tools the app registered handlers for (`ZehnIntelligence.registerTool`), sorted, at most 128. Left out when there are none. The server offers the model a tool that has no request only when the turn names it. See [Tools and widgets of the app's own](#tools-and-widgets-of-the-apps-own). |
 | `components` | The names of the components the app registered builders for (`ZehnIntelligence.registerComponent`), sorted, at most 32. Left out when there are none. |
+
+A filled-in form, after a `form` event (section 3):
+
+```json
+{
+  "conversation_id": "6f1c...",
+  "input": { "type": "form", "form_id": "3c9a...", "values": { "name": "Ali", "guests": 2 } },
+  "language": "uz"
+}
+```
+
+- It needs a `conversation_id`: the chat that showed the form. It counts as a turn for the rate limits, like a tap on a confirm card.
+- `form_id` is the one from the `form` event. `values` are the form's visible fields that have a value, by field key, exactly as typed: text trimmed and nothing else, a number as a JSON number, `true` / `false`, `YYYY-MM-DD`, an option's `value` or (for a multiple `Select`) a list of them. A hidden field is never sent. `values` is at most 32 KB. Nothing else goes in `input`.
+- The server checks `values` against the card's template. A failure is `422 form_invalid` and the form stays open for another send. Once it passes, the form is answered by this turn, and answered for good only if the turn ends `done`; if it fails for any reason, the form can be sent again.
+- Any new turn in the chat, of any kind, closes the forms still waiting for an answer. The form's own turn draws no bubble of the user's.
 
 The answer is `200 text/event-stream`, with the header `X-ZI-Turn-Id`.
 
@@ -242,6 +258,7 @@ data: {"turn_id":"7b2e...","seq":3,"text":"Here are some"}
 | `text.delta` | `text` | Append to the assistant's bubble. The text can contain **Markdown**: render it. |
 | `client_api_request` | `call_id`, `tool`, `args` | Run the registered handler for `tool`. |
 | `mount_component` | `call_id`, `component`, `kind`, `props` | Show the registered widget. `kind`: `inline` (in the chat), `sheet` (bottom sheet) or `route` (a full screen: close the chat sheet first). |
+| `form` | `call_id`, `form_id`, `component`, `tool`, `surface`, `props` | Draw the form card, inline, with `props.form` (what is already filled in). The answers go back as a turn (section 1); the card is described in `docs/DYNAMIC_CARDS.md`, section 4. An SDK older than 0.7.0 ignores it. |
 | `audio` | `format`, `text`, `data` | `voice_reply` only. One clip of the spoken answer, base64 (`mp3`). Queue the clips and play them in `seq` order. |
 | `suggestions` | `items` | Up to 3 follow-up questions, sent just before `done`. Show them as chips. A tap sends the chip as a typed question. |
 | `turn.paused` | `call_ids`, `deadline`, `expires_in`, `max_result_bytes` | Ends this stream. Post the results of `call_ids` (section 2). |
@@ -309,7 +326,9 @@ Voice errors (in the `error` event):
 [
   { "role": "user", "type": "text", "text": "find me a city tour", "spoken": true, "turn_id": "...", "at": "..." },
   { "role": "assistant", "type": "text", "text": "Here are three tours...", "turn_id": "...", "at": "..." },
-  { "role": "assistant", "type": "component", "component": "TourCard", "kind": "inline", "props": { ... }, "turn_id": "...", "at": "..." }
+  { "role": "assistant", "type": "component", "component": "TourCard", "kind": "inline", "props": { ... }, "turn_id": "...", "at": "..." },
+  { "role": "assistant", "type": "form", "call_id": "f_1", "form_id": "3c9a...", "component": "book_table", "tool": "bookings.create",
+    "surface": { "createSurface": { ... } }, "props": { "form": { "date": "2026-11-14" } }, "status": "pending", "turn_id": "...", "at": "..." }
 ]
 ```
 
@@ -318,6 +337,7 @@ Voice errors (in the `error` event):
 - `spoken: true` means the user said it; `text` is what was heard.
 - Tool calls and results are not in the history, only what the user saw.
 - When loading history, render `inline` widgets, but **don't open `sheet` or `route` widgets on their own**.
+- A `form` message has a `status`: `pending`, `submitted` or `dismissed`. `props.form` holds the values that were sent when it is `submitted`, else the prefill. A `pending` form can still be answered, also in a chat that was closed and reopened; the other two are drawn read-only.
 - `can_continue: false` means the chat started on another spec version, or is full. Show it read-only, and send the next question with `conversation_id: null`.
 - Only the user's own chats are listed. Another user's id answers `404 conversation_not_found`.
 - `DELETE` answers `409 turn_in_progress` while a turn is still running in that chat.
@@ -336,7 +356,7 @@ Before the stream starts, an error is a JSON body with an HTTP status. After the
 { "code": "user_token_expired", "i18n_key": "errors.user_token_expired", "params": {}, "message": "..." }
 ```
 
-**Switch on `code`, never on `message`.** Any `422` (a malformed body) counts as `invalid_request`.
+**Switch on `code`, never on `message`.** Any `422` counts as `invalid_request`, except `form_invalid`.
 
 | Code | Status | What the SDK does |
 |---|---|---|
@@ -347,8 +367,11 @@ Before the stream starts, an error is a JSON body with an HTTP status. After the
 | `sdk_too_old` | 426 | "Update the app" (`params.min_version`) |
 | `user_rate_limited`, `quota_exceeded` | 429 | Show the wait from `Retry-After` ("Try again in 30 s"); never retry by itself |
 | `service_not_enabled` | 400 | The mic or voice reply is not switched on for this app. Hide it. |
-| `conversation_not_found`, `conversation_spec_changed`, `conversation_full` | 404 / 409 | Resend once with `conversation_id: null`. For `conversation_full`, also note "starting a new chat". |
+| `conversation_not_found`, `conversation_spec_changed`, `conversation_full` | 404 / 409 | Resend once with `conversation_id: null`. For `conversation_full`, also note "starting a new chat". A form is never resent into a new chat: it locks as "Not answered". |
 | `turn_in_progress` | 409 | A turn is already running. Never send two at once. |
+| `form_not_found` | 404 | The form is not in this chat. It locks as "Not answered". |
+| `form_used` | 409 | The form was already answered or closed; `params.status` is `submitted` or `dismissed`. The form takes that state. |
+| `form_invalid` | 422 | The answers failed the form's checks. `params.errors` is a list of `{"field": "phone", "rule": "phone"}` (`rule` is `number`, `email`, `phone`, `date`, `option`, `required`, `length`, `range`, `items`, `type` or `unknown_field`); the SDK puts each on its field and the form stays open. |
 | `turn_expired` | 409 or event | The results came too late. "That took too long, ask again." |
 | `turn_not_paused` | 409 | The results were already taken (a retry after a network drop). End the turn as `stream_interrupted`. |
 | `turn_not_found`, `invalid_tool_results` | 404 / 400 | SDK bug: unknown or repeated `call_id` |
@@ -376,6 +399,7 @@ Codes the SDK sets itself:
 | Typed question | 4000 characters |
 | Recording | 1 MiB decoded (about 1 min of AAC). The whole body is at most 1.5 MiB. |
 | Tool result | 32 KB each. The whole request is at most 1 MB. |
+| Form answers | 32 KB |
 | Deadline for tool results | 60 s |
 | Rounds per turn | 8 |
 | Tool calls per round | 8 |

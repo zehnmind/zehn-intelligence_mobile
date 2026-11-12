@@ -1,6 +1,6 @@
 {
   "catalog": "zehn.basic.v1",
-  "sdk_version": "0.6.0",
+  "sdk_version": "0.7.0",
   "common": {"id": "string", "component": "string", "visible": "value", "width": "number",
              "height": "number", "flex": "number", "padding": "insets", "action": "action",
              "position": ["center", "top", "bottom", "start", "end", "top_start", "top_end", "bottom_start", "bottom_end"]},
