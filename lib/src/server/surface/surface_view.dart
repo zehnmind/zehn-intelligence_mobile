@@ -1,16 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'formats.dart';
 import 'surface.dart';
+import 'values.dart';
 
 /// The only things a component's tap may ask for.
 const ziAllowedActions = {'open_route', 'ask', 'open_url'};
 
 /// Catalog `zehn.basic.v0`: what this build can draw.
 const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider'};
-
-const _languages = {'uz', 'ru', 'en'};
 
 /// The icons a template can name (`icon`); listed in `catalog/zehn.basic.json`.
 const ziIcons = <String, IconData>{
@@ -81,51 +79,11 @@ class _Builder {
 
   // ---- values --------------------------------------------------------------
 
-  bool _localized(Map<Object?, Object?> m) => m.isNotEmpty && m.keys.every(_languages.contains);
+  late final ZiValues values = ZiValues(v.data, v.language);
 
-  Object? _pick(Map<Object?, Object?> m) => m[v.language] ?? m['en'] ?? m.values.first;
+  Object? resolve(Object? value, Object? item) => values.resolve(value, item);
 
-  Object? _lookup(String path, Object? item) {
-    Object? node = path.startsWith('/') ? v.data : item;
-    for (final part in path.split('/').where((p) => p.isNotEmpty)) {
-      if (node is Map) {
-        node = node[part];
-      } else if (node is List) {
-        final i = int.tryParse(part);
-        node = i != null && i >= 0 && i < node.length ? node[i] : null;
-      } else {
-        return null;
-      }
-    }
-    return node is Map && _localized(node) ? _pick(node) : node;
-  }
-
-  /// `{/a/b}`, or `{/a/b|format}` (`formats.dart`).
-  String _interpolate(String s, Object? item) => s.replaceAllMapped(RegExp(r'\{([^{}\s]+)\}'), (m) {
-    final inside = m[1]!;
-    final bar = inside.indexOf('|');
-    if (bar < 0) return '${_lookup(inside, item) ?? ''}';
-    return ziFormat(_lookup(inside.substring(0, bar), item), inside.substring(bar + 1), v.language);
-  });
-
-  /// A literal, `{"path": …}` (with an optional `format`), a language map,
-  /// or a string with `{/a/b}`.
-  Object? resolve(Object? value, Object? item) {
-    if (value is Map) {
-      if (value['path'] is String) {
-        final found = _lookup(value['path'] as String, item);
-        final format = value['format'];
-        return format is String ? ziFormat(found, format, v.language) : found;
-      }
-      if (_localized(value)) return resolve(_pick(value), item);
-      return {for (final e in value.entries) '${e.key}': resolve(e.value, item)};
-    }
-    if (value is String) return _interpolate(value, item);
-    if (value is List) return [for (final x in value) resolve(x, item)];
-    return value;
-  }
-
-  String text(Object? value, Object? item) => '${resolve(value, item) ?? ''}';
+  String text(Object? value, Object? item) => values.text(value, item);
 
   double? number(Object? value) => value is num ? value.toDouble() : null;
 
@@ -237,10 +195,7 @@ class _Builder {
     if (depth > 32) return _error('Nested too deep at "$id"');
     final spec = v.surface.components[id];
     if (spec == null) return _error('No component "$id"');
-    if (spec.containsKey('visible')) {
-      final shown = resolve(spec['visible'], item);
-      if (shown == null || shown == false || shown == '') return null;
-    }
+    if (!values.shown(spec, item)) return null;
     try {
       return _wrap(spec, item, _component(spec, item, depth));
     } on Object catch (e) {
@@ -450,7 +405,7 @@ class _Builder {
       }
     } else if (c is Map && c['componentId'] is String) {
       // A template repeated over a list in the data: paths without "/" read the item.
-      final items = c['path'] is String ? _lookup(c['path'] as String, item) : null;
+      final items = c['path'] is String ? values.lookup(c['path'] as String, item) : null;
       final templateId = c['componentId'] as String;
       // `separator`: a block drawn between two repeats (a divider), never before the first or after the last.
       final separatorId = c['separator'] is String ? c['separator'] as String : null;
