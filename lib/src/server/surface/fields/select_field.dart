@@ -21,8 +21,8 @@ class ZiSelectFieldBlock extends StatefulWidget {
 }
 
 class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
-  /// The open dropdown sheet's own context; null when no sheet is open.
-  BuildContext? _sheet;
+  /// The open dropdown sheet's route and the navigator holding it; null when no sheet is open.
+  ({NavigatorState navigator, ModalRoute<Object?> route})? _sheet;
 
   Map<String, Object?> get spec => widget.spec;
   ZiValues get values => widget.values;
@@ -40,13 +40,14 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
     super.dispose();
   }
 
-  /// Closes the sheet after this frame: the tree cannot be changed while it is being built or taken apart.
+  /// Closes this sheet's route after this frame (the tree cannot be changed while it is being built or taken
+  /// apart), and no other: one the person already closed is no longer active.
   void _closeSheet() {
     final sheet = _sheet;
     if (sheet == null) return;
     _sheet = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (sheet.mounted) Navigator.of(sheet).pop();
+      if (sheet.navigator.mounted && sheet.route.isActive) sheet.navigator.removeRoute(sheet.route);
     });
   }
 
@@ -111,7 +112,9 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
                       // The status now, not the one the sheet was opened with.
                       if (widget.form?.status != ZiFormStatus.pending) return;
                       toggle(o.value);
-                      if (!multiple && look != 'list') Navigator.of(sheet).pop();
+                      if (!multiple && look != 'list' && ModalRoute.of(sheet)?.isCurrent == true) {
+                        Navigator.of(sheet).pop();
+                      }
                     }
                   : null,
               onSurface,
@@ -161,7 +164,7 @@ class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
                     backgroundColor: t.color('surface', Colors.black),
                     isScrollControlled: true,
                     builder: (sheet) {
-                      _sheet = sheet;
+                      _sheet = (navigator: Navigator.of(sheet), route: ModalRoute.of(sheet)!);
                       return SafeArea(
                         child: SingleChildScrollView(
                           child: ListenableBuilder(listenable: draft, builder: (c, _) => rows(c)),

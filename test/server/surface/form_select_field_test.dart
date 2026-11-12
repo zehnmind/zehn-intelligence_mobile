@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zehn_intelligence/src/server/surface/form_draft.dart';
 
+import 'package:zehn_intelligence/src/server/surface/surface.dart';
+import 'package:zehn_intelligence/src/server/surface/surface_view.dart';
+
+import '../../support/form_cards.dart';
 import '../../support/form_pump.dart';
 
 List<Map<String, Object?>> pick(Map<String, Object?> more) => [
@@ -135,14 +139,36 @@ void main() {
     expect(p.draft.raw['city'], ['tashkent']);
   });
 
-  testWidgets('the card goes while the dropdown sheet is open: the sheet closes, nothing throws', (tester) async {
-    await pumpForm(tester, pick(const {}));
+  testWidgets('the card goes while the dropdown sheet is open: the sheet closes, the page stays, nothing throws', (
+    tester,
+  ) async {
+    final surface = card(pick(const {}));
+    final draft = ZiFormDraft(surface);
+    final body = ValueNotifier<Widget>(
+      ZiSurfaceView(
+        surface: surface,
+        data: const {},
+        theme: const ZiTheme({}),
+        language: 'en',
+        onAction: (_) {},
+        form: ZiFormScope(formId: 'f1', draft: draft, onSubmit: () {}),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ValueListenableBuilder<Widget>(valueListenable: body, builder: (_, w, _) => w),
+        ),
+      ),
+    );
     await tester.tap(find.text('Choose'));
     await tester.pumpAndSettle();
     expect(option('bukhara'), findsOneWidget);
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox())));
+    body.value = const SizedBox();
+    await tester.pump();
     await tester.pumpAndSettle();
     expect(option('bukhara'), findsNothing);
+    expect(find.byType(Scaffold), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
