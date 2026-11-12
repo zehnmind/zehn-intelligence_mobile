@@ -382,11 +382,11 @@ class _Builder {
           clipBehavior: Clip.none,
           alignment: _alignment(s['alignment']) ?? AlignmentDirectional.topStart,
           children: [
-            for (final (i, (spec, w)) in pairs.indexed)
+            for (final (i, (spec, w, key)) in pairs.indexed)
               if (_alignment(spec?['position']) case final place? when i > 0)
-                Positioned.fill(child: Align(alignment: place, child: w))
+                Positioned.fill(key: key, child: Align(alignment: place, child: w))
               else
-                w,
+                _keyed(key, w),
           ],
         );
       case 'Wrap':
@@ -553,18 +553,24 @@ class _Builder {
   }
 
   List<Widget> _children(Map<String, Object?> s, Object? item, int depth, {required bool flexible}) => [
-    for (final (spec, w) in _built(s, item, depth))
-      flexible && spec?['flex'] is num ? Expanded(flex: (spec!['flex'] as num).toInt(), child: w) : w,
+    for (final (spec, w, key) in _built(s, item, depth))
+      flexible && spec?['flex'] is num
+          ? Expanded(key: key, flex: (spec!['flex'] as num).toInt(), child: w)
+          : _keyed(key, w),
   ];
 
-  /// Each drawn child with its spec; a child that is not shown is left out.
-  List<(Map<String, Object?>?, Widget)> _built(Map<String, Object?> s, Object? item, int depth) {
+  Widget _keyed(Key? key, Widget w) => key == null ? w : KeyedSubtree(key: key, child: w);
+
+  /// Each drawn child with its spec; a child that is not shown is left out. In a form, a child named by id has a
+  /// key to go on the outermost widget its parent makes for it, so a field keeps its text and focus when a sibling
+  /// before it appears or goes. A repeated child has none: its id is built many times.
+  List<(Map<String, Object?>?, Widget, Key?)> _built(Map<String, Object?> s, Object? item, int depth) {
     final c = s['children'];
-    final pairs = <(Map<String, Object?>?, Widget)>[];
+    final pairs = <(Map<String, Object?>?, Widget, Key?)>[];
     if (c is List) {
       for (final id in c) {
         final w = build('$id', item, depth + 1);
-        if (w != null) pairs.add((v.surface.components['$id'], w));
+        if (w != null) pairs.add((v.surface.components['$id'], w, v.form == null ? null : ValueKey('zi-block-$id')));
       }
     } else if (c is Map && c['componentId'] is String) {
       // A template repeated over a list in the data: paths without "/" read the item.
@@ -576,8 +582,8 @@ class _Builder {
         final w = build(templateId, element, depth + 1);
         if (w == null) continue;
         final between = pairs.isEmpty || separatorId == null ? null : build(separatorId, item, depth + 1);
-        if (between != null) pairs.add((v.surface.components[separatorId], between));
-        pairs.add((v.surface.components[templateId], w));
+        if (between != null) pairs.add((v.surface.components[separatorId], between, null));
+        pairs.add((v.surface.components[templateId], w, null));
       }
     }
     return pairs;

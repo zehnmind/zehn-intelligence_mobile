@@ -156,4 +156,61 @@ void main() {
     expect(find.byType(TextField), findsNothing);
     expect(find.text('Ali'), findsOneWidget);
   });
+
+  group('a field keeps its State when a sibling before it comes and goes', () {
+    List<Map<String, Object?>> shown(String parent, Map<String, Object?> extra) => [
+      {
+        'id': 'root',
+        'component': parent,
+        'children': ['a', 'b'],
+      },
+      {
+        'id': 'a',
+        'component': 'TextField',
+        'field': 'a',
+        'label': 'A',
+        'visible': {'path': '/form/b'},
+        ...extra,
+      },
+      {'id': 'b', 'component': 'TextField', 'field': 'b', 'label': 'B', ...extra},
+    ];
+
+    Future<void> typeIntoB(WidgetTester tester, Map<String, Object?> extra, {String parent = 'Column'}) async {
+      final p = await pumpForm(tester, shown(parent, extra));
+      expect(field('a'), findsNothing);
+      await tester.tap(editable('b'));
+      await tester.enterText(editable('b'), 'x');
+      await tester.pump();
+      expect(field('a'), findsOneWidget);
+      final box = tester.widget<EditableText>(editable('b'));
+      expect(box.focusNode.hasFocus, isTrue);
+      expect(box.controller.text, 'x');
+      expect(box.controller.selection.baseOffset, 1);
+      expect(p.draft.raw['b'], 'x');
+    }
+
+    testWidgets('padded, in a Column', (tester) => typeIntoB(tester, {'padding': 4}));
+    testWidgets('with flex, in a Row', (tester) => typeIntoB(tester, {'flex': 1}, parent: 'Row'));
+  });
+
+  testWidgets('typing keeps focus and the cursor', (tester) async {
+    await pumpForm(tester, two);
+    await tester.tap(editable('name'));
+    await tester.enterText(editable('name'), 'Ali');
+    await tester.pump();
+    await tester.enterText(editable('name'), 'Alis');
+    await tester.pump();
+    final box = tester.widget<EditableText>(editable('name'));
+    expect(box.focusNode.hasFocus, isTrue);
+    expect(box.controller.selection.baseOffset, 4);
+  });
+
+  testWidgets('the edit box itself carries the name and the hint for a screen reader', (tester) async {
+    final handle = tester.ensureSemantics();
+    await pumpForm(tester, two);
+    final node = tester.getSemantics(editable('name'));
+    expect(node.flagsCollection.isTextField, isTrue);
+    expect(node.label, contains('Your name'));
+    handle.dispose();
+  });
 }
