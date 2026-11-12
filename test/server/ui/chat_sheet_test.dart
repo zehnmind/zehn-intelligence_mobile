@@ -773,6 +773,37 @@ void main() {
       expect(tester.getBottomLeft(box('phone')).dy, lessThanOrEqualTo(keyboardTop));
     });
 
+    testWidgets('a failed Send above the list brings the first failing field into view with its label and error', (tester) async {
+      const tallCard = <String, Object?>{'createSurface': {'root': 'root', 'components': [
+        {'id': 'root', 'component': 'Column', 'gap': 12, 'children': ['name', 'phone', 'email', 'city', 'guests', 'notes', 'send']},
+        {'id': 'name', 'component': 'TextField', 'field': 'name', 'label': 'Your name', 'checks': [{'rule': 'required'}]},
+        {'id': 'phone', 'component': 'TextField', 'field': 'phone', 'label': 'Phone', 'input': 'phone'},
+        {'id': 'email', 'component': 'TextField', 'field': 'email', 'label': 'Email', 'input': 'email'},
+        {'id': 'city', 'component': 'TextField', 'field': 'city', 'label': 'City'},
+        {'id': 'guests', 'component': 'TextField', 'field': 'guests', 'label': 'Guests', 'input': 'number'},
+        {'id': 'notes', 'component': 'TextField', 'field': 'notes', 'label': 'Notes', 'input': 'multiline'},
+        {'id': 'send', 'component': 'Button', 'label': 'Book', 'action': {'name': 'submit'}}]}};
+      turns.script([started, book(surface: tallCard), done]);
+      await open(tester);
+      await type(tester, 'book a table');
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      final position = tester.state<ScrollableState>(chatList()).position;
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      final list = tester.getRect(chatList());
+      expect(tester.getRect(find.text('Your name')).top, lessThan(list.top)); // the form is taller than the list
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pumpAndSettle();
+      expect(turns.starts, hasLength(1));
+      for (final part in [find.text('Your name'), nameBox(), find.byKey(const ValueKey('zi-error-name'))]) {
+        final rect = tester.getRect(part);
+        expect(rect.top, greaterThanOrEqualTo(list.top));
+        expect(rect.bottom, lessThanOrEqualTo(list.bottom));
+      }
+    });
+
     testWidgets('a form with a block this build cannot draw shows the update line and no fields', (tester) async {
       turns.script([started, book(surface: const {'createSurface': {'root': 'root', 'components': [
         {'id': 'root', 'component': 'Column', 'children': ['name', 'stars']},

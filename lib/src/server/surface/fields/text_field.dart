@@ -100,7 +100,9 @@ class _ZiTextFieldBlockState extends State<ZiTextFieldBlock> {
         minLines: multiline ? 3 : 1,
         maxLines: multiline ? 6 : 1,
         inputFormatters: [LengthLimitingTextInputFormatter(maxLength)],
-        scrollPadding: const EdgeInsets.fromLTRB(20, 20, 20, 96),
+        // The top covers the label above the box: when a failed Send focuses a field above the list, this
+        // reveal replaces the frame's own scroll, and the label must come into view with the field.
+        scrollPadding: const EdgeInsets.fromLTRB(20, 56, 20, 96),
         style: body,
         onChanged: (text) => form.draft.set(_field, text),
         decoration: InputDecoration(
