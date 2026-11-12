@@ -3,9 +3,13 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../api/api_client.dart';
 import '../api/turn_client.dart';
 import '../api/turn_events.dart';
 import '../proxy/tool_runner.dart';
+import '../surface/form_draft.dart';
+import '../surface/surface.dart';
+import '../surface/surface_view.dart';
 import 'audio_queue.dart';
 import 'chat_state.dart';
 import 'history.dart';
@@ -61,6 +65,20 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   /// Actions the user confirmed whose write has not been made yet.
   final Set<String> _confirmed = {};
   final Map<String, Timer> _expiry = {};
+
+  /// What the person typed into each form of this chat, by form id. Kept here, not in the
+  /// widgets, so it outlives a card scrolled away and the chat closed and opened again.
+  final Map<String, ZiFormDraft> _forms = {};
+
+  /// The drafts of the forms still waiting when a new chat was started, by form id, for when their
+  /// conversation is opened again from the history. A plain [reset] (sign-out) and [close] drop them.
+  final Map<String, ZiFormDraft> _setAside = {};
+
+  /// The forms the running turn showed: locked if that turn fails.
+  final Set<String> _shownThisTurn = {};
+
+  /// The form whose answers the running turn sends.
+  String? _sending;
   Completer<TurnEvent?>? _leg;
   TurnInput? _last;
   int _generation = 0;
@@ -73,6 +91,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     var t = text.trim();
     if (t.isEmpty || state.busy || state.readOnly || isClosed) return;
     if (t.length > maxTextLength) t = t.substring(0, maxTextLength);
+    _dismissPendingForms();
     final input = TurnInput.text(
       conversationId: state.conversationId,
       text: t,
@@ -84,6 +103,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
 
   Future<void> sendAudio(String base64, String format, {required bool voiceReply}) async {
     if (state.busy || state.readOnly || isClosed) return;
+    _dismissPendingForms();
     final input = TurnInput.audio(
       conversationId: state.conversationId,
       base64: base64,
@@ -95,12 +115,19 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     await _begin(input, const ZiUserItem('', spoken: true));
   }
 
-  /// Sends the last question again, after a retryable error.
+  /// Sends the last question again, after a retryable error. A form is sent
+  /// with what it holds now, not what the failed send carried.
   Future<void> retry() async {
     final last = _last;
     if (last == null || state.busy || isClosed) return;
     final items = [...state.items];
     if (items.isNotEmpty && items.last is ZiErrorItem) items.removeLast();
+    final formId = last.input['form_id'];
+    if (last.isForm && formId is String) {
+      _emit(state.copyWith(items: items));
+      await submitForm(formId);
+      return;
+    }
     _quiet = false;
     _emit(state.copyWith(items: items, busy: true, suggestions: const []));
     await _run(last.withConversation(state.conversationId), _generation);
@@ -123,6 +150,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     if (state.busy || isClosed) return;
     final card = state.items.whereType<ZiConfirmItem>().where((c) => c.actionId == actionId).firstOrNull;
     if (card == null || card.status != ZiConfirmStatus.pending) return;
+    _dismissPendingForms();
     _expiry.remove(actionId)?.cancel();
     _setStatus(actionId, confirm ? ZiConfirmStatus.confirmed : ZiConfirmStatus.cancelled);
     if (confirm) _confirmed.add(actionId);
@@ -171,33 +199,214 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     ]));
   }
 
+  /// The draft of a form in this chat; null for an id it does not hold.
+  ZiFormDraft? formDraft(String formId) => _forms[formId];
+
+  /// The person's tap on Send: checks the draft, then a new turn with its values.
+  /// Only the first tap counts. A form with a block this build cannot draw is
+  /// never sent: it would go without that field.
+  Future<void> submitForm(String formId) async {
+    final conversationId = state.conversationId;
+    if (state.busy || state.readOnly || isClosed || conversationId == null) return;
+    final form = state.items.whereType<ZiFormItem>().where((f) => f.formId == formId).firstOrNull;
+    final draft = _forms[formId];
+    if (form == null || form.status != ZiFormStatus.pending || draft == null || !ziDraws(draft.surface)) return;
+    if (!draft.check()) return;
+    // Read in the same step as the check, so what is sent is what was checked.
+    final values = draft.values;
+    draft.markNotSent(false);
+    _sending = formId;
+    // Set before anything is awaited, so a second tap finds it no longer pending.
+    _moveForms((f) => switch (f) {
+      _ when f.formId == formId => ZiFormStatus.sending,
+      ZiFormItem(status: ZiFormStatus.pending) => ZiFormStatus.dismissed,
+      _ => null,
+    });
+    await _audio.stop();
+    _quiet = false;
+    final input = TurnInput.form(
+      conversationId: conversationId,
+      formId: formId,
+      values: values,
+      language: _language(),
+      utcOffsetMinutes: _utcOffset(),
+    );
+    _last = input;
+    _emit(state.copyWith(busy: true, suggestions: const [], clearPlaying: true));
+    await _run(input, _generation);
+  }
+
+  void _showForm(FormEvent event) {
+    if (state.items.any((i) => i is ZiFormItem && i.formId == event.formId)) return;
+    final draft = _draftOf(event.surface, event.props);
+    if (draft == null) return;
+    _forms[event.formId] = draft;
+    _shownThisTurn.add(event.formId);
+    final form = ZiFormItem(
+      formId: event.formId,
+      callId: event.callId,
+      component: event.component,
+      tool: event.tool,
+      surface: event.surface,
+      data: event.props,
+    );
+    _emit(state.copyWith(items: [...state.items, form]));
+  }
+
+  /// A draft of [surface] holding the prefill in [data]; null for a template
+  /// that does not parse, which shows no form.
+  ZiFormDraft? _draftOf(Map<String, Object?> surface, Map<String, Object?> data) {
+    final ZiSurface parsed;
+    try {
+      parsed = ZiSurface.parse(surface);
+    } on FormatException catch (e) {
+      debugPrint('zehn_intelligence: a form template could not be read: ${e.message}');
+      return null;
+    }
+    final prefill = data['form'];
+    return ZiFormDraft(parsed, prefill: prefill is Map<String, Object?> ? prefill : const {});
+  }
+
+  /// Gives each form the status [next] names for it; null leaves it as it is.
+  void _moveForms(ZiFormStatus? Function(ZiFormItem form) next) {
+    ZiChatItem moved(ZiChatItem item) {
+      if (item is! ZiFormItem) return item;
+      final status = next(item);
+      return status == null || status == item.status ? item : item.withStatus(status);
+    }
+
+    _emit(state.copyWith(items: [for (final item in state.items) moved(item)]));
+  }
+
+  void _setFormStatus(String formId, ZiFormStatus status) => _moveForms((f) => f.formId == formId ? status : null);
+
+  /// A new turn takes the place of every form still waiting for an answer.
+  void _dismissPendingForms() => _moveForms((f) => f.status == ZiFormStatus.pending ? ZiFormStatus.dismissed : null);
+
+  /// The turn that showed these forms failed: it is not remembered, so its
+  /// forms can no longer be answered.
+  void _dismissShownForms() {
+    if (_shownThisTurn.isEmpty) return;
+    _moveForms((f) => _shownThisTurn.contains(f.formId) && f.status == ZiFormStatus.pending ? ZiFormStatus.dismissed : null);
+    _shownThisTurn.clear();
+  }
+
+  /// What a failed form turn does to its form. True when the form says it all
+  /// and the chat shows no error.
+  bool _formFailed(ZiApiException error) {
+    final formId = _sending;
+    if (formId == null) return false;
+    final status = switch (error.code) {
+      'form_invalid' => ZiFormStatus.pending,
+      'form_used' => error.params['status'] == 'submitted' ? ZiFormStatus.submitted : ZiFormStatus.dismissed,
+      'form_not_found' => ZiFormStatus.dismissed,
+      // A form belongs to its conversation: it can't be carried into a new one.
+      final code when _conversationErrors.contains(code) => ZiFormStatus.dismissed,
+      _ => null,
+    };
+    if (status == null) {
+      _formNotSent();
+      return false;
+    }
+    _sending = null;
+    _setFormStatus(formId, status);
+    if (error.code == 'form_invalid') _showServerErrors(formId, error.params['errors']);
+    if (_conversationErrors.contains(error.code)) _emit(state.copyWith(clearConversation: true));
+    return true;
+  }
+
+  /// The form's send failed for a reason of its own: open again, every value
+  /// kept, saying Not sent.
+  void _formNotSent() {
+    final formId = _sending;
+    if (formId == null) return;
+    _sending = null;
+    _setFormStatus(formId, ZiFormStatus.pending);
+    _forms[formId]?.markNotSent(true);
+  }
+
+  /// `form_invalid`'s `params.errors` on their fields. A refusal that names
+  /// nothing the form can show says Not sent instead, so a Send never fails
+  /// without a word.
+  void _showServerErrors(String formId, Object? errors) {
+    final draft = _forms[formId];
+    if (draft == null) return;
+    final rules = <String, String>{};
+    var unread = errors is! List || errors.isEmpty;
+    for (final e in errors is List ? errors : const <Object?>[]) {
+      if (e is Map && e['field'] is String && e['rule'] is String) {
+        rules[e['field'] as String] = e['rule'] as String;
+      } else {
+        unread = true;
+      }
+    }
+    draft.serverErrors(rules);
+    if (unread) draft.markNotSent(true);
+  }
+
   /// Shows an error the SDK found itself, before anything was sent (a
   /// recording over 1 MiB).
   void showError(String code, {bool retryable = false}) =>
       _emit(state.copyWith(items: [...state.items, ZiErrorItem(code, retryable: retryable)]));
 
-  /// Forgets the conversation (sign-out, "new chat").
-  void reset() {
+  /// Forgets the conversation (sign-out, "new chat"). With [keepDrafts] ("new chat"), what was typed
+  /// into the forms still waiting is set aside for when that conversation is opened again from the
+  /// history; without it (sign-out), nothing typed is kept.
+  void reset({bool keepDrafts = false}) {
+    if (keepDrafts) {
+      for (final item in state.items) {
+        if (item is ZiFormItem && item.status == ZiFormStatus.pending) {
+          if (_forms.remove(item.formId) case final draft?) {
+            _setAside.remove(item.formId)?.dispose();
+            _setAside[item.formId] = draft;
+          }
+        }
+      }
+    } else {
+      _dropSetAside();
+    }
     _forget();
     _emit(const ZiChatState());
   }
 
   /// Shows a conversation from the history in place of the current one. One
   /// that can go on takes the next question; one that can't is read-only,
-  /// and its unanswered confirm cards are past answering.
+  /// and its unanswered confirm cards and forms are past answering. Each form
+  /// gets a draft holding what it was sent or offered with; one whose
+  /// template does not parse is left out. Picking the open conversation again,
+  /// or one left with "new chat", keeps what was typed into its forms that are
+  /// still waiting.
   void resume(ZiConversation conversation) {
+    final kept = <String, ZiFormDraft>{};
+    if (conversation.id == state.conversationId) {
+      for (final item in conversation.items) {
+        if (item is ZiFormItem && item.status == ZiFormStatus.pending) {
+          if (_forms.remove(item.formId) case final draft?) kept[item.formId] = draft;
+        }
+      }
+    }
     _forget();
     final open = conversation.canContinue;
-    _emit(ZiChatState(
-      items: [
-        for (final item in conversation.items)
-          !open && item is ZiConfirmItem && item.status == ZiConfirmStatus.pending
-              ? item.withStatus(ZiConfirmStatus.expired)
-              : item,
-      ],
-      conversationId: open ? conversation.id : null,
-      readOnly: !open,
-    ));
+    final items = <ZiChatItem>[];
+    for (final item in conversation.items) {
+      if (item is ZiFormItem) {
+        // A draft set aside is used only for a form still waiting; one the server holds an answer for is dropped.
+        final aside = _setAside.remove(item.formId);
+        final waiting = item.status == ZiFormStatus.pending;
+        final held = waiting ? kept.remove(item.formId) ?? aside : null;
+        if (!identical(held, aside)) aside?.dispose();
+        final draft = held ?? _draftOf(item.surface, item.data);
+        if (draft == null) continue;
+        _forms[item.formId]?.dispose();
+        _forms[item.formId] = draft;
+      }
+      items.add(switch (item) {
+        ZiConfirmItem(status: ZiConfirmStatus.pending) when !open => item.withStatus(ZiConfirmStatus.expired),
+        ZiFormItem(status: ZiFormStatus.pending) when !open => item.withStatus(ZiFormStatus.dismissed),
+        _ => item,
+      });
+    }
+    _emit(ZiChatState(items: items, conversationId: open ? conversation.id : null, readOnly: !open));
   }
 
   void _forget() {
@@ -210,6 +419,23 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       timer.cancel();
     }
     _expiry.clear();
+    _dropForms();
+  }
+
+  void _dropForms() {
+    for (final draft in _forms.values) {
+      draft.dispose();
+    }
+    _forms.clear();
+    _shownThisTurn.clear();
+    _sending = null;
+  }
+
+  void _dropSetAside() {
+    for (final draft in _setAside.values) {
+      draft.dispose();
+    }
+    _setAside.clear();
   }
 
   @override
@@ -219,6 +445,8 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     for (final timer in _expiry.values) {
       timer.cancel();
     }
+    _dropForms();
+    _dropSetAside();
     await _opens.close();
     return super.close();
   }
@@ -260,11 +488,14 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   }
 
   Future<void> _run(TurnInput input, int generation) async {
+    _shownThisTurn.clear();
     try {
       await _loop(input, generation);
     } on Object catch (e) {
       // Last resort: a bug or a thrown callback must not leave the chat busy.
       if (generation != _generation || isClosed) return;
+      _dismissShownForms();
+      _formNotSent();
       _emit(state.copyWith(busy: false, items: [...state.items, const ZiErrorItem('internal_error', retryable: true)]));
       assert(() {
         debugPrint('zehn_intelligence: the turn failed: $e');
@@ -287,10 +518,19 @@ class ZiChatCubit extends Cubit<ZiChatState> {
           if (generation != _generation || isClosed) return;
           stream = _turns.sendResults(end.turnId, results, deadline: end.deadline);
         case TurnDone():
+          // A form is answered only by a turn that ends done.
+          final form = _sending;
+          _sending = null;
+          if (form != null) _setFormStatus(form, ZiFormStatus.submitted);
           _emit(state.copyWith(busy: false));
           return;
         case TurnFailed():
           final code = end.error.code;
+          _dismissShownForms();
+          if (_formFailed(end.error)) {
+            _emit(state.copyWith(busy: false));
+            return;
+          }
           final action = current.input['action_id'];
           if (current.isAction && action is String && _actionErrors.contains(code)) {
             // Already used, expired or unknown: the card says so.
@@ -328,6 +568,8 @@ class ZiChatCubit extends Cubit<ZiChatState> {
         switch (event) {
           case TurnStarted():
             _emit(state.copyWith(conversationId: event.conversationId));
+            // The server took the answers: the form draws as sent.
+            if (_sending case final form?) _setFormStatus(form, ZiFormStatus.submitted);
           case TranscriptEvent():
             _replaceSpoken(event.text);
           case TextDelta():
@@ -338,6 +580,8 @@ class ZiChatCubit extends Cubit<ZiChatState> {
             _mount(event);
           case ConfirmEvent():
             _showConfirm(event);
+          case FormEvent():
+            _showForm(event);
           case AudioClip():
             _speak(event);
           case SuggestionsEvent():

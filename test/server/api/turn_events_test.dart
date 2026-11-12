@@ -117,6 +117,25 @@ void main() {
     expect(bare.expiresIn, const Duration(seconds: 600));
   });
 
+  test('form parses the card, its ids and the prefill', () {
+    final e = event('form', {
+      'call_id': 'c3',
+      'form_id': 'f1',
+      'component': 'book_table',
+      'tool': 'bookings.create',
+      'surface': {'createSurface': <String, Object?>{}},
+      'props': {'form': {'date': '2026-11-14'}},
+    }) as FormEvent;
+    expect((e.callId, e.formId, e.component, e.tool, e.turnId), ('c3', 'f1', 'book_table', 'bookings.create', 't1'));
+    expect(e.surface, {'createSurface': <String, Object?>{}});
+    expect(e.props, {'form': {'date': '2026-11-14'}});
+  });
+
+  test('form without a form_id or a surface throws FormatException', () {
+    expect(() => event('form', {'form_id': 'f1'}), throwsFormatException);
+    expect(() => event('form', {'surface': <String, Object?>{}}), throwsFormatException);
+  });
+
   test('turn.paused parses deadline as DateTime', () {
     final e = event('turn.paused', {
       'call_ids': ['c_1', 'c_2'],

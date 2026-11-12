@@ -1,16 +1,24 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import 'formats.dart';
+import 'fields/date_field.dart';
+import 'fields/select_field.dart';
+import 'fields/text_field.dart';
+import 'fields/toggle_field.dart';
+import 'form_check.dart';
+import 'form_draft.dart';
+import 'form_words.dart';
 import 'surface.dart';
+import 'values.dart';
 
 /// The only things a component's tap may ask for.
-const ziAllowedActions = {'open_route', 'ask', 'open_url'};
+const ziAllowedActions = {'open_route', 'ask', 'open_url', 'submit'};
 
-/// Catalog `zehn.basic.v0`: what this build can draw.
-const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider'};
+/// Catalog `zehn.basic.v1`: what this build can draw.
+const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider', 'Stack', 'Wrap', 'Progress', 'Avatar', 'TextField', 'Checkbox', 'Switch', 'Select', 'DateField'};
 
-const _languages = {'uz', 'ru', 'en'};
+/// Whether this build has a widget for every block of [surface]'s template.
+bool ziDraws(ZiSurface surface) => surface.components.values.every((spec) => ziCatalog.contains(spec['component']));
 
 /// The icons a template can name (`icon`); listed in `catalog/zehn.basic.json`.
 const ziIcons = <String, IconData>{
@@ -61,6 +69,7 @@ class ZiSurfaceView extends StatelessWidget {
     required this.theme,
     required this.language,
     required this.onAction,
+    this.form,
   });
 
   final ZiSurface surface;
@@ -69,63 +78,37 @@ class ZiSurfaceView extends StatelessWidget {
   final String language;
   final void Function(ZiSurfaceAction action) onAction;
 
+  /// Set when the card is a form: blocks read what is typed from `/form`, and Send asks the form.
+  final ZiFormScope? form;
+
   @override
-  Widget build(BuildContext context) => _Builder(this).build(surface.root, null, 0) ?? const SizedBox.shrink();
+  Widget build(BuildContext context) {
+    final form = this.form;
+    if (form == null) return _Builder(this, data).build(surface.root, null, 0) ?? const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: form.draft,
+      builder: (context, _) {
+        final base = data is Map<String, Object?> ? data as Map<String, Object?> : const <String, Object?>{};
+        return _Builder(this, {...base, 'form': form.draft.values}).build(surface.root, null, 0) ??
+            const SizedBox.shrink();
+      },
+    );
+  }
 }
 
 class _Builder {
-  _Builder(this.v);
+  _Builder(this.v, Object? data) : values = ZiValues(data, v.language);
 
   final ZiSurfaceView v;
   ZiTheme get t => v.theme;
 
   // ---- values --------------------------------------------------------------
 
-  bool _localized(Map<Object?, Object?> m) => m.isNotEmpty && m.keys.every(_languages.contains);
+  final ZiValues values;
 
-  Object? _pick(Map<Object?, Object?> m) => m[v.language] ?? m['en'] ?? m.values.first;
+  Object? resolve(Object? value, Object? item) => values.resolve(value, item);
 
-  Object? _lookup(String path, Object? item) {
-    Object? node = path.startsWith('/') ? v.data : item;
-    for (final part in path.split('/').where((p) => p.isNotEmpty)) {
-      if (node is Map) {
-        node = node[part];
-      } else if (node is List) {
-        final i = int.tryParse(part);
-        node = i != null && i >= 0 && i < node.length ? node[i] : null;
-      } else {
-        return null;
-      }
-    }
-    return node is Map && _localized(node) ? _pick(node) : node;
-  }
-
-  /// `{/a/b}`, or `{/a/b|format}` (`formats.dart`).
-  String _interpolate(String s, Object? item) => s.replaceAllMapped(RegExp(r'\{([^{}\s]+)\}'), (m) {
-    final inside = m[1]!;
-    final bar = inside.indexOf('|');
-    if (bar < 0) return '${_lookup(inside, item) ?? ''}';
-    return ziFormat(_lookup(inside.substring(0, bar), item), inside.substring(bar + 1), v.language);
-  });
-
-  /// A literal, `{"path": …}` (with an optional `format`), a language map,
-  /// or a string with `{/a/b}`.
-  Object? resolve(Object? value, Object? item) {
-    if (value is Map) {
-      if (value['path'] is String) {
-        final found = _lookup(value['path'] as String, item);
-        final format = value['format'];
-        return format is String ? ziFormat(found, format, v.language) : found;
-      }
-      if (_localized(value)) return resolve(_pick(value), item);
-      return {for (final e in value.entries) '${e.key}': resolve(e.value, item)};
-    }
-    if (value is String) return _interpolate(value, item);
-    if (value is List) return [for (final x in value) resolve(x, item)];
-    return value;
-  }
-
-  String text(Object? value, Object? item) => '${resolve(value, item) ?? ''}';
+  String text(Object? value, Object? item) => values.text(value, item);
 
   double? number(Object? value) => value is num ? value.toDouble() : null;
 
@@ -227,6 +210,10 @@ class _Builder {
         if (rawArgs is Map)
           for (final e in rawArgs.entries) '${e.key}': resolve(e.value, item),
       };
+      if (name == 'submit') {
+        v.form?.onSubmit();
+        return;
+      }
       v.onAction(ZiSurfaceAction(name, args));
     };
   }
@@ -237,10 +224,7 @@ class _Builder {
     if (depth > 32) return _error('Nested too deep at "$id"');
     final spec = v.surface.components[id];
     if (spec == null) return _error('No component "$id"');
-    if (spec.containsKey('visible')) {
-      final shown = resolve(spec['visible'], item);
-      if (shown == null || shown == false || shown == '') return null;
-    }
+    if (!values.shown(spec, item)) return null;
     try {
       return _wrap(spec, item, _component(spec, item, depth));
     } on Object catch (e) {
@@ -390,18 +374,170 @@ class _Builder {
           ),
         );
       case 'Button':
-        final secondary = s['variant'] == 'secondary';
-        final fg = secondary ? onSurface : t.color('on_accent', Colors.white);
-        final icon = glyph(s['icon'], 20, fg.withValues(alpha: 0.75));
-        return Material(
-          color: secondary ? chip : t.color('accent', Colors.orange),
-          borderRadius: BorderRadius.circular(t.radius('button', 16)),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: action(s, item),
-            child: SizedBox(
-              height: 50,
-              child: Row(mainAxisAlignment: MainAxisAlignment.center, spacing: 8, children: [
+        return _button(s, item);
+      case 'Divider':
+        return Container(height: 1, color: t.color('border', chip));
+      case 'Stack':
+        // A block with a position is laid over the others; the first block is always a plain one,
+        // so the stack always has a size.
+        final pairs = _built(s, item, depth);
+        return Stack(
+          clipBehavior: Clip.none,
+          alignment: _alignment(s['alignment']) ?? AlignmentDirectional.topStart,
+          children: [
+            for (final (i, (spec, w, key)) in pairs.indexed)
+              if (_alignment(spec?['position']) case final place? when i > 0)
+                Positioned.fill(key: key, child: Align(alignment: place, child: w))
+              else
+                _keyed(key, w),
+          ],
+        );
+      case 'Wrap':
+        final gap = number(s['gap']) ?? 0;
+        return Wrap(
+          spacing: gap,
+          runSpacing: number(s['runGap']) ?? gap,
+          alignment: switch (s['align']) {
+            'center' => WrapAlignment.center,
+            'end' => WrapAlignment.end,
+            _ => WrapAlignment.start,
+          },
+          children: _children(s, item, depth, flexible: false),
+        );
+      case 'Progress':
+        final value = resolve(s['value'], item);
+        final fraction = value is num && !value.isNaN ? value.toDouble().clamp(0.0, 1.0) : 0.0;
+        final height = (number(s['height']) ?? 6).clamp(2.0, 40.0);
+        // Full width where the parent bounds it; a Row child with no width or flex gets 120.
+        return LayoutBuilder(
+          builder: (context, constraints) => ClipRRect(
+            borderRadius: BorderRadius.circular(height / 2),
+            child: Container(
+              width: constraints.hasBoundedWidth ? double.infinity : 120,
+              height: height,
+              color: t.color(s['track'], chip),
+              alignment: AlignmentDirectional.centerStart,
+              child: FractionallySizedBox(
+                widthFactor: fraction,
+                heightFactor: 1,
+                child: ColoredBox(color: t.color(s['color'], t.color('accent', Colors.orange))),
+              ),
+            ),
+          ),
+        );
+      case 'TextField':
+        final form = v.form;
+        final shown = form == null ? const <String>{} : form.draft.hidden;
+        final lastField = ziFormFields(v.surface).lastWhere(
+          (f) => f['component'] == 'TextField' && !shown.contains(f['field']),
+          orElse: () => s,
+        )['field'];
+        return ZiTextFieldBlock(
+          key: form == null ? null : ValueKey('zi-field-${form.formId}-${s['id']}'),
+          spec: s,
+          values: values,
+          theme: t,
+          form: form,
+          last: lastField == s['field'],
+        );
+      case 'Checkbox':
+      case 'Switch':
+        final form = v.form;
+        return ZiToggleFieldBlock(
+          key: form == null ? null : ValueKey('zi-field-${form.formId}-${s['id']}'),
+          spec: s,
+          values: values,
+          theme: t,
+          form: form,
+        );
+      case 'Select':
+        final form = v.form;
+        return ZiSelectFieldBlock(
+          key: form == null ? null : ValueKey('zi-field-${form.formId}-${s['id']}'),
+          spec: s,
+          values: values,
+          theme: t,
+          form: form,
+        );
+      case 'DateField':
+        final form = v.form;
+        return ZiDateFieldBlock(
+          key: form == null ? null : ValueKey('zi-field-${form.formId}-${s['id']}'),
+          spec: s,
+          values: values,
+          theme: t,
+          form: form,
+        );
+      case 'Avatar':
+        final size = (number(s['size']) ?? 40).clamp(16.0, 160.0);
+        final src = text(s['src'], item);
+        final initials = Container(
+          alignment: Alignment.center,
+          color: t.color(s['color'], chip),
+          child: Text(
+            text(s['text'], item).trim().characters.take(2).toString().toUpperCase(),
+            style: t.text('body', color: onSurface, size: size * 0.4, weight: 500),
+          ),
+        );
+        return ClipOval(
+          child: SizedBox(
+            width: size,
+            height: size,
+            child: src.startsWith('https://') || src.startsWith('http://')
+                ? ColoredBox(
+                    color: t.color('image_bg', Colors.black12),
+                    child: Image.network(
+                      src,
+                      width: size,
+                      height: size,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => initials,
+                    ),
+                  )
+                : initials,
+          ),
+        );
+      default:
+        return _error('"$type" is not in catalog ${v.surface.catalogId}');
+    }
+  }
+
+  Widget _button(Map<String, Object?> s, Object? item) {
+    final submit = s['action'] is Map && (s['action'] as Map)['name'] == 'submit';
+    final form = v.form;
+    final muted = t.color('muted', Colors.white70);
+    if (submit && form == null) return const SizedBox.shrink();
+    if (submit && form!.readOnly) {
+      final word = form.status == ZiFormStatus.submitted ? 'sent' : 'not_answered';
+      return Text(
+        ziFormWord(word, v.language),
+        key: const ValueKey('zi-form-status'),
+        style: t.text('caption', color: muted),
+      );
+    }
+    final sending = submit && form!.status == ZiFormStatus.sending;
+    final busy = submit && form!.busy;
+    final secondary = s['variant'] == 'secondary';
+    final fg = secondary ? t.color('on_surface', Colors.white) : t.color('on_accent', Colors.white);
+    final fill = secondary ? t.color('chip', Colors.white10) : t.color('accent', Colors.orange);
+    final tap = sending || busy ? null : action(s, item);
+    final icon = glyph(s['icon'], 20, fg.withValues(alpha: 0.75));
+    final button = Semantics(
+      button: true,
+      enabled: tap != null,
+      child: Material(
+        key: submit ? const ValueKey('zi-form-send') : null,
+        color: busy ? fill.withValues(alpha: 0.4) : fill,
+        borderRadius: BorderRadius.circular(t.radius('button', 16)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: tap,
+          child: SizedBox(
+            height: 50,
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, spacing: 8, children: [
+              if (sending)
+                SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: fg))
+              else ...[
                 ?icon,
                 Flexible(
                   child: Text(
@@ -411,15 +547,21 @@ class _Builder {
                     style: t.text('title', color: fg),
                   ),
                 ),
-              ]),
-            ),
+              ],
+            ]),
           ),
-        );
-      case 'Divider':
-        return Container(height: 1, color: t.color('border', chip));
-      default:
-        return _error('"$type" is not in catalog ${v.surface.catalogId}');
-    }
+        ),
+      ),
+    );
+    if (!submit || !form!.draft.notSent || sending) return button;
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, spacing: 6, children: [
+      button,
+      Text(
+        ziFormWord('not_sent', v.language),
+        key: const ValueKey('zi-form-not-sent'),
+        style: t.text('caption', color: t.color('error', const Color(0xFFD64545))),
+      ),
+    ]);
   }
 
   /// Padding, size and tap for any component; Header, InfoRow and Button handle their own tap.
@@ -430,8 +572,9 @@ class _Builder {
     if (type != 'Box' && !(type == 'Row' && s['scroll'] == true) && padding != EdgeInsets.zero) {
       w = Padding(padding: padding, child: w);
     }
+    // A Progress holds its own height to 2..40.
     if (type != 'Image' && (s['width'] != null || s['height'] != null)) {
-      w = SizedBox(width: number(s['width']), height: number(s['height']), child: w);
+      w = SizedBox(width: number(s['width']), height: type == 'Progress' ? null : number(s['height']), child: w);
     }
     if (!const {'Header', 'InfoRow', 'Button'}.contains(type)) {
       final tap = action(s, item);
@@ -440,17 +583,29 @@ class _Builder {
     return w;
   }
 
-  List<Widget> _children(Map<String, Object?> s, Object? item, int depth, {required bool flexible}) {
+  List<Widget> _children(Map<String, Object?> s, Object? item, int depth, {required bool flexible}) => [
+    for (final (spec, w, key) in _built(s, item, depth))
+      flexible && spec?['flex'] is num
+          ? Expanded(key: key, flex: (spec!['flex'] as num).toInt(), child: w)
+          : _keyed(key, w),
+  ];
+
+  Widget _keyed(Key? key, Widget w) => key == null ? w : KeyedSubtree(key: key, child: w);
+
+  /// Each drawn child with its spec; a child that is not shown is left out. In a form, a child named by id has a
+  /// key to go on the outermost widget its parent makes for it, so a field keeps its text and focus when a sibling
+  /// before it appears or goes. A repeated child has none: its id is built many times.
+  List<(Map<String, Object?>?, Widget, Key?)> _built(Map<String, Object?> s, Object? item, int depth) {
     final c = s['children'];
-    final pairs = <(Map<String, Object?>?, Widget)>[];
+    final pairs = <(Map<String, Object?>?, Widget, Key?)>[];
     if (c is List) {
       for (final id in c) {
         final w = build('$id', item, depth + 1);
-        if (w != null) pairs.add((v.surface.components['$id'], w));
+        if (w != null) pairs.add((v.surface.components['$id'], w, v.form == null ? null : ValueKey('zi-block-$id')));
       }
     } else if (c is Map && c['componentId'] is String) {
       // A template repeated over a list in the data: paths without "/" read the item.
-      final items = c['path'] is String ? _lookup(c['path'] as String, item) : null;
+      final items = c['path'] is String ? values.lookup(c['path'] as String, item) : null;
       final templateId = c['componentId'] as String;
       // `separator`: a block drawn between two repeats (a divider), never before the first or after the last.
       final separatorId = c['separator'] is String ? c['separator'] as String : null;
@@ -458,14 +613,11 @@ class _Builder {
         final w = build(templateId, element, depth + 1);
         if (w == null) continue;
         final between = pairs.isEmpty || separatorId == null ? null : build(separatorId, item, depth + 1);
-        if (between != null) pairs.add((v.surface.components[separatorId], between));
-        pairs.add((v.surface.components[templateId], w));
+        if (between != null) pairs.add((v.surface.components[separatorId], between, null));
+        pairs.add((v.surface.components[templateId], w, null));
       }
     }
-    return [
-      for (final (spec, w) in pairs)
-        flexible && spec?['flex'] is num ? Expanded(flex: (spec!['flex'] as num).toInt(), child: w) : w,
-    ];
+    return pairs;
   }
 
   CrossAxisAlignment _cross(Object? value, CrossAxisAlignment fallback) => switch (value) {

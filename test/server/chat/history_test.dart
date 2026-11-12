@@ -3,8 +3,10 @@ import 'package:zehn_intelligence/src/server/api/api_client.dart';
 import 'package:zehn_intelligence/src/server/auth/token_source.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
 import 'package:zehn_intelligence/src/server/chat/history.dart';
+import 'package:zehn_intelligence/src/server/surface/form_draft.dart';
 
 import '../../support/fake_server.dart';
+import '../../support/form_cards.dart';
 import '../../support/test_info.dart';
 
 /// `GET /v1/conversations/{id}` as the backend answers it (runtime/history.py).
@@ -98,6 +100,28 @@ void main() {
           status: ZiConfirmStatus.confirmed,
         ),
         const ZiConfirmItem(actionId: 'a-2', tool: 'parking.reserve', method: ''),
+      ]);
+    });
+
+    test('a form reads back with its status, and what was sent as its data', () {
+      final c = ZiConversation.fromJson({
+        ...conversationJson(),
+        'messages': [
+          {
+            'role': 'assistant', 'type': 'form', 'call_id': 'c3', 'form_id': 'f1', 'component': 'book_table',
+            'tool': 'bookings.create', 'surface': bookCard, 'props': {'form': {'name': 'Ali'}}, 'status': 'submitted',
+            'turn_id': 't1', 'at': '2026-11-06T09:12:05Z',
+          },
+          {'role': 'assistant', 'type': 'form', 'form_id': 'f2', 'surface': bookCard, 'status': 'sending'},
+          {'role': 'assistant', 'type': 'form', 'form_id': 'f3'},
+        ],
+      });
+      expect(c.items, [
+        const ZiFormItem(
+          formId: 'f1', callId: 'c3', component: 'book_table', tool: 'bookings.create', surface: bookCard,
+          data: {'form': {'name': 'Ali'}}, status: ZiFormStatus.submitted,
+        ),
+        const ZiFormItem(formId: 'f2', callId: 'h1', component: '', tool: '', surface: bookCard, status: ZiFormStatus.dismissed),
       ]);
     });
 

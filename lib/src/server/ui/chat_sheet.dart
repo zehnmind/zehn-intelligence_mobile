@@ -13,6 +13,8 @@ import '../chat/chat_settings.dart';
 import '../chat/chat_state.dart';
 import '../chat/history.dart';
 import '../chat/history_cubit.dart';
+import '../surface/form_draft.dart';
+import '../surface/form_words.dart';
 import '../surface/surface.dart';
 import '../surface/surface_view.dart';
 import 'chrome.dart';
@@ -240,20 +242,69 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     return _surface(item.surface, item.data);
   }
 
+  /// Each template, parsed once, by the map it came in: its [ZiSurface], or
+  /// the [FormatException] it failed with. Every keystroke in the chat's own
+  /// input rebuilds the sheet; the cards must not be parsed again for it.
+  final _parsed = Expando<Object>('templates');
+
   Widget _surface(Map<String, Object?>? json, Map<String, Object?> data) {
     if (json == null) return const SizedBox.shrink();
+    final parsed = _parsed[json] ??= _parse(json);
+    if (parsed is! ZiSurface) return const SizedBox.shrink();
+    return ZiSurfaceView(
+      surface: parsed,
+      data: data,
+      theme: ZiTheme(_settings.theme),
+      language: widget.language(),
+      onAction: _onAction,
+    );
+  }
+
+  static Object _parse(Map<String, Object?> json) {
     try {
-      return ZiSurfaceView(
-        surface: ZiSurface.parse(json),
-        data: data,
-        theme: ZiTheme(_settings.theme),
-        language: widget.language(),
-        onAction: _onAction,
-      );
+      return ZiSurface.parse(json);
     } on FormatException catch (e) {
       debugPrint('zehn_intelligence: a component template is broken: $e');
-      return const SizedBox.shrink();
+      return e;
     }
+  }
+
+  /// A card with fields. Its draft, and with it what is typed, belongs to the
+  /// chat, so it outlives the card scrolling away and the sheet closing; the
+  /// view listens to the draft and redraws only this card as the person
+  /// types. Like a result card it has no frame of its own: the template's
+  /// root `Box` is the card.
+  Widget _formCard(ZiFormItem item, {required bool busy}) {
+    final draft = widget.cubit.formDraft(item.formId);
+    final language = widget.language();
+    final Widget card;
+    if (draft == null) {
+      card = const SizedBox.shrink();
+    } else if (!ziDraws(draft.surface)) {
+      // A form that silently lost a field must not be sendable: none of it is drawn.
+      final s = _style;
+      card = Text(
+        ziFormWord('update_app', language),
+        key: const ValueKey('zi-form-update'),
+        style: s.small.copyWith(color: s.muted),
+      );
+    } else {
+      card = ZiSurfaceView(
+        surface: draft.surface,
+        data: item.data,
+        theme: ZiTheme(_settings.theme),
+        language: language,
+        onAction: _onAction,
+        form: ZiFormScope(
+          formId: item.formId,
+          draft: draft,
+          status: item.status,
+          busy: busy,
+          onSubmit: () => unawaited(widget.cubit.submitForm(item.formId)),
+        ),
+      );
+    }
+    return KeyedSubtree(key: ValueKey('zi-form-${item.formId}'), child: card);
   }
 
   // ---- input ---------------------------------------------------------------
@@ -265,8 +316,9 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     unawaited(widget.cubit.sendText(text));
   }
 
+  /// What is typed into a waiting form is set aside, for when its conversation is opened again from the history.
   void _newChat() {
-    widget.cubit.reset();
+    widget.cubit.reset(keepDrafts: true);
     _startedAt = null;
     setState(() => _typing = false);
     unawaited(widget.cubit.loadStarterSuggestions());
@@ -590,9 +642,14 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
 
   Widget _conversation(ZiChatState state, ZiChatStyle s, ZiStrings words) {
     final last = state.items.lastOrNull;
-    final waitingForUser = last is ZiConfirmItem && last.status == ZiConfirmStatus.pending;
+    // The turn may still be running, but the next move is the person's.
+    final waitingForUser = switch (last) {
+      ZiConfirmItem(status: ZiConfirmStatus.pending) || ZiFormItem(status: ZiFormStatus.pending) => true,
+      _ => false,
+    };
     final thinking = state.busy && last is! ZiAssistantItem && !waitingForUser;
-    final followUps = !state.busy && state.items.isNotEmpty && state.suggestions.isNotEmpty;
+    // Not beside a card that waits: a stray tap would send a turn and lock a form whose values were never sent.
+    final followUps = !state.busy && !waitingForUser && state.items.isNotEmpty && state.suggestions.isNotEmpty;
     // Each turn's last part carries the speaker, when its speech is held.
     final lastPart = {
       for (final item in state.items)
@@ -798,6 +855,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     ),
     ZiComponentItem() => _component(item),
     ZiConfirmItem() => _confirmCard(item, s, words, busy: busy),
+    ZiFormItem() => _formCard(item, busy: busy),
     ZiErrorItem() => Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

@@ -33,6 +33,16 @@ class TurnInput {
   }) : input = {'type': 'action', 'action_id': actionId, 'decision': confirm ? 'confirm' : 'cancel'},
        voiceReply = false;
 
+  /// The user's send of a `form` card: [values] by field key.
+  TurnInput.form({
+    this.conversationId,
+    required String formId,
+    required Map<String, Object?> values,
+    required this.language,
+    this.utcOffsetMinutes,
+  }) : input = {'type': 'form', 'form_id': formId, 'values': values},
+       voiceReply = false;
+
   const TurnInput._(this.conversationId, this.input, this.language, this.utcOffsetMinutes, this.voiceReply);
 
   /// Null starts a new chat.
@@ -44,6 +54,7 @@ class TurnInput {
 
   bool get isAudio => input['type'] == 'audio';
   bool get isAction => input['type'] == 'action';
+  bool get isForm => input['type'] == 'form';
 
   TurnInput withConversation(String? id) => TurnInput._(id, input, language, utcOffsetMinutes, voiceReply);
 

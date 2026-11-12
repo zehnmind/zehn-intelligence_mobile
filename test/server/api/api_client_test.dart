@@ -36,7 +36,7 @@ void main() {
     expect(h['x-zi-package'], 'uz.example.app');
     expect(h['x-zi-app-version'], '1.2.0+5');
     expect(h['x-zi-install-id'], '01234567-89ab-4def-8123-456789abcdef');
-    expect(h['x-zi-sdk-version'], '0.6.0');
+    expect(h['x-zi-sdk-version'], '0.7.0');
     // With it the server treats the build as one that pins a spec.
     expect(h.containsKey('x-zi-spec-version'), isFalse);
     expect(h['x-zi-platform'], 'ios');
@@ -75,6 +75,17 @@ void main() {
     final e = await failure(api.postJson('/v1/turns', {}));
     expect(e.code, 'invalid_request');
     expect(e.retryable, isFalse);
+  });
+
+  test('a 422 form_invalid keeps its code and the fields that failed', () async {
+    server.on('POST', '/v1/turns', (req, _) => respondJson(req, 422, {
+          'code': 'form_invalid',
+          'message': 'm',
+          'params': {'errors': [{'field': 'phone', 'rule': 'phone'}]},
+        }));
+    final e = await failure(api.postJson('/v1/turns', {}));
+    expect((e.code, e.retryable), ('form_invalid', false));
+    expect(e.params['errors'], [{'field': 'phone', 'rule': 'phone'}]);
   });
 
   test('unknown 5xx is retryable', () async {

@@ -3,7 +3,7 @@
 How the console defines the cards the assistant shows in a customer's app, and what the
 backend must store, validate and send so the mobile SDK can draw them.
 
-Matches SDK `0.6.0` (`zehn_intelligence`, `main`) and the backend's answer,
+Matches SDK `0.7.0` (`zehn_intelligence`, `main`) and the backend's answer,
 `CARDS_FOR_MOBILE.md` (branch `feat/proxy-sdk`). Related documents:
 
 - `docs/MOBILE_INTEGRATION.md`: the turn protocol (`/v1/turns`, SSE events, tool results).
@@ -50,6 +50,7 @@ simply not drawn.
 | **Kind** | How a component is shown: `inline` (in the chat), `sheet` (a bottom sheet over the chat), or `route` (open a screen of the app). |
 | **Surface** | The JSON template of an `inline` or `sheet` component. Its shape is borrowed from Google's open A2UI format. |
 | **Block** | One element inside a surface: `Text`, `Image`, `Button`, and so on (see section 7). |
+| **Form card** | A card with input fields and a Send button, shown with the `form` event. What the person fills in goes back as their answer in the chat (sections 4 and 7.2). |
 | **Props / data** | The JSON the card shows, sent in `mount_component.props`. |
 | **Theme** | Colours, text sizes, corner radii and font name, shared by all cards of an app. |
 
@@ -140,6 +141,83 @@ data: {"turn_id":"…","seq":7,"call_id":"c2","action_id":"6f1d…","tool":"park
 - After `expires_in` seconds, or on `action_used` / `action_expired` / `action_not_found`, the
   card shows as expired.
 
+### Form cards: the `form` event
+
+When the assistant needs several details at once (a name, a date, a phone number), it shows a
+**form card** for the tool the answers are for. The backend sends it as its own event; an SDK older
+than 0.7.0 ignores the event, and the backend does not offer forms to it.
+
+```
+event: form
+data: {"turn_id":"7b2e…","seq":8,"call_id":"f_1","form_id":"3c9a…","component":"book_table","tool":"bookings.create","surface":{"createSurface":{ …section 6… }},"props":{"form":{"date":"2026-11-14"}}}
+```
+
+| Field | Rule |
+|---|---|
+| `call_id` | Any unique string; history uses it. |
+| `form_id` | A UUID. The phone sends it back with the answers, and the backend answers `form_used` for a second send. |
+| `component` | The form card's name. |
+| `tool` | The tool the answers are for. |
+| `surface` | The card's template (sections 6 and 7.2). A form is always `inline`. |
+| `props` | `{"form": {…}}`: what is already filled in, by field key (section 6.5). `{"form": {}}` when nothing is. |
+
+What the SDK does:
+
+- Draws the card in the chat, under the assistant's text, with the fields in `props.form` filled in.
+  What the person types is kept in the chat, not in the card: it survives scrolling, a switch to
+  voice or history and back, and closing and reopening the chat (not the app being killed).
+  Reopening the conversation that is already open keeps it too, and so does starting a new chat:
+  what was typed into a form still waiting comes back when that conversation is opened again from
+  the history. Signing out discards it.
+- While a form waits for the person, the follow-up suggestions are not shown: a stray tap on one
+  would start a turn and lock the form without its answers.
+- A tap on the form's `submit` button (section 8) checks every visible field (section 7.2). A field
+  that fails shows its message under it, and the first one is scrolled into view and focused. If all
+  pass, the button shows progress, the fields turn off, and the SDK starts a turn:
+  `"input": {"type": "form", "form_id": "…", "values": {"name": "Ali", "guests": 2}}` (the shape,
+  the checks and the errors the backend answers with are in `MOBILE_INTEGRATION.md`, sections 1 and 7).
+- `values` holds every visible field that has a value, as typed: a text trimmed and nothing else, a
+  number as a JSON number, a checkbox or switch as `true` / `false`, a date as `YYYY-MM-DD`, a
+  `Select` as its option's `value`, or a list of them when `multiple`. A hidden field, and an empty
+  one, is left out. Send is off while the chat is busy.
+- Once the server takes the answers, the fields turn into plain label-and-value lines and the button
+  becomes the word **Sent**. The assistant then carries on: for a writing tool, with its confirm card
+  (so a booking is two taps, Send then Confirm); for a reading tool, with the result.
+
+A form on the phone is in one of four states:
+
+| State | Meaning |
+|---|---|
+| `pending` | Waiting for answers. |
+| `sending` | The answers are on their way; fields are off. |
+| `submitted` | Answered. Draws read-only, with **Sent**. |
+| `dismissed` | Can no longer be answered. Draws read-only, with **Not answered**, still showing what was typed. |
+
+A form is answered **once**, and what happens to it is fixed:
+
+- Any other turn in the conversation (typed, spoken, a confirm tap, another form) locks every form
+  still `pending` as `dismissed`. So does the failure of the turn that showed the form.
+- It counts as answered only when the turn its answers started ends `done`. If the send fails for
+  any other reason (no network, a timeout, the turn ending in an error), the form is `pending`
+  again with everything typed kept and the line "Not sent. Try again.". The chat's own Retry sends
+  the same answers again.
+- The backend's own refusals: `form_invalid` puts its messages on the fields it names and the form
+  stays `pending` (a rule the phone has no words for, `type` or `unknown_field`, or a field that is
+  hidden or not in the form, is not shown on a field; the form says "Not sent. Try again." instead);
+  `form_used` takes the state the answer names (`submitted` or `dismissed`);
+  `form_not_found` locks it as `dismissed`.
+- When the conversation cannot go on (`conversation_full`, `conversation_spec_changed`,
+  `conversation_not_found`) the form locks as `dismissed`: a form is not carried into a new chat.
+
+The phone passes every value on exactly as typed, and so does the backend; the model writes the
+tool's arguments from them and may reshape them. A writing tool still asks first with its confirm
+card, which shows the final arguments.
+
+A form card is `inline` only, has between 1 and 12 fields and exactly one `submit` button, and its
+fields are never inside a repeated block. A form card has no `items`, `id`, `max_items` or
+`confirm_label`, and a tool has at most one form. The backend refuses a card that breaks these when
+it is saved.
+
 ---
 
 ## 5. Theme and welcome text: `GET /v1/config`
@@ -197,7 +275,10 @@ assistant button. The SDK never sends or reads a spec version.
   there is no nesting in the JSON itself.
 - Every block needs a unique string `id` and a `component` (the block type, section 7).
 - `root` is the id of the outermost block (default `"root"`). It must exist.
-- `catalogId` is always `"zehn.basic.v0"` for now. `surfaceId` is informational.
+- `catalogId` is `"zehn.basic.v0"` for a card of the first eleven blocks, and `"zehn.basic.v1"` for
+  one that uses a newer block, `position`, the `submit` action or an `equals` value. The backend
+  sets it when it saves the card, and sends a `v1` card only to SDK 0.7.0 or newer. `surfaceId` is
+  informational.
 - Blocks can be nested at most 32 levels deep.
 - Unknown keys are ignored, so you can add notes such as `"_note"`.
 
@@ -215,6 +296,7 @@ accepts one of these forms:
 | Language map with placeholders | `{ "uz": "{/floor}-qavat", "en": "Floor {/floor}" }` | Both together. |
 | Placeholder with a format | `"{/start\|time} – {/end\|time}"`, `"{/price\|money:UZS}/soat"` | The value at the path, drawn in that format (below). |
 | Data path with a format | `{ "path": "/price", "format": "money:UZS" }` | The same, for a whole value. |
+| Comparison | `{ "path": "/form/reason", "equals": "other" }` | `true` or `false`: the value at the path equals the literal (a string, a number or a bool). For showing a block only for one answer (section 6.4). |
 
 **Formats** draw a value in the user's language:
 
@@ -268,9 +350,42 @@ never before the first or after the last, and not next to a repeat that `visible
 
 The block is skipped when `visible` resolves to `null`, `false` or `""`. Use it for optional data.
 
+A comparison (section 6.2) gives `true` or `false`, so a block can show for one answer only:
+
+```json
+{ "id": "other", "component": "TextField", "field": "other_reason", "label": "Tell us more",
+  "visible": { "path": "/form/reason", "equals": "other" } }
+```
+
+`2` equals `2.0`; a string never equals a number. When the value at the path is a list (a multiple
+`Select`), it is `true` when the list contains the literal. There are no other operators.
+
+### 6.5 What a form holds: `/form`
+
+In a form card, the data is `{"form": {…}}`: what the fields hold now, by field key. It starts as
+`props.form` (what the assistant filled in) and changes as the person types. Any block can read it
+with the paths of section 6.2: `{ "path": "/form/name" }`, or `"Hello, {/form/name}"` in a string.
+Those blocks redraw as the person types.
+
+| Field | Value at `/form/<field>` |
+|---|---|
+| `TextField` | The text, trimmed; absent when empty. For `input: number`, a number once the text is one. |
+| `Checkbox`, `Switch` | `true` or `false`. |
+| `Select` | The option's `value`; a list of them when `multiple`. |
+| `DateField` | `YYYY-MM-DD`. |
+
+A **hidden** field is one whose own `visible`, or that of any block above it up to the root, resolves
+to `null`, `false` or `""` against this data. A hidden field is not checked and not sent. Its value
+also counts as absent when other blocks' `visible` is worked out, so a field that only a hidden
+field would show is hidden too. A path that leads nowhere (a field with no value yet) is empty, as
+everywhere. A card that is not a form has no `/form` data (section 13).
+
 ---
 
-## 7. Block catalog (`zehn.basic.v0`)
+## 7. Block catalog (`zehn.basic.v1`)
+
+Everything in `zehn.basic.v0` draws exactly as before; `v1` adds the blocks, properties and
+action marked below. A card that uses none of them stays `v0`.
 
 Properties every block accepts:
 
@@ -283,6 +398,7 @@ Properties every block accepts:
 | `flex` | number | Shares the free width with sibling blocks. **Use only on children of a non-scrolling `Row`.** |
 | `padding` | number or object | Space inside the block (section 7.1). |
 | `action` | object | Makes the block tappable (section 8). `Header`, `InfoRow` and `Button` show their own tap feedback. |
+| `position` | `center`, `top`, `bottom`, `start`, `end`, `top_start`, `top_end`, `bottom_start`, `bottom_end` | Places the block over its siblings inside the `Stack` that holds it, with `padding` keeping it off the edge. Any other parent ignores it. (`v1`) |
 
 The blocks:
 
@@ -299,6 +415,11 @@ The blocks:
 | `InfoRow` | `text`, `icon`, `action` | An icon and a line of text with a divider under it (hours, phone, website); a chevron when it has an action. |
 | `Button` | `label`, `icon`, `variant` (`primary` default, or `secondary`), `action` | A full-width 50px button. Primary uses `accent`, secondary uses `chip`. |
 | `Divider` | — | A 1px line in `border` colour. |
+| `Stack` (`v1`) | `children`, `alignment` (the nine values of `Box`, default `top_start`) | Its children on top of each other, the first at the back. Its size is that of its biggest child that has no `position`; the first child's `position` is ignored. A child with a `position` is laid over the others (a label or badge on an image). |
+| `Wrap` (`v1`) | `children`, `gap` (number), `runGap` (number, default `gap`), `align` (`start`·`center`·`end`, default `start`) | Children left to right, flowing onto the next line when the row is full (chips, tags). |
+| `Progress` (`v1`) | `value` (0 to 1), `color` (default `accent`), `track` (colour, default `chip`), `height` (2 to 40, default 6) | A rounded bar filled from 0 to `value`. Full width where its parent bounds the width; with no `width` and no `flex` in a parent that does not (a `Row`), 120 px. |
+| `Avatar` (`v1`) | `src`, `text`, `size` (16 to 160, default 40), `color` (default `chip`) | A round image. With no image (or when it fails to load) it shows the first two letters of `text`, upper-cased. |
+| `TextField`, `Checkbox`, `Switch`, `Select`, `DateField` (`v1`) | Section 7.2 | Form fields. |
 
 ### 7.1 Looking like the app's own widgets
 
@@ -359,7 +480,10 @@ show a neutral default icon, and `Chip` and `Button` show none. A new built-in i
 properties and a line on when to use it), icon, action, text style, colour and radius token,
 and format this SDK draws, with its `sdk_version`. The analyzer reads it at the commit an app's
 `pubspec.lock` names. A test fails when the file and the renderer disagree. A type in
-`props` is a name (`value`, `number`, `color`, …) or a list of the allowed words.
+`props` is a name (`value`, `number`, `color`, …), a list of the allowed words, or a number with
+its range (`{"type": "number", "min": 6, "max": 96}`). Each block also has its `group`
+(`layout`, `content` or `field`) and `needs`, the properties it cannot draw without; the file
+lists the checks, what `v1` added (`since`) and the words of section 7.2 too.
 
 **Colours** (`color`, `border`) are a theme token name (`"surface"`, `"muted"`, …, section 9) or a
 literal `"#RRGGBB"` / `"#AARRGGBB"`. Prefer tokens, so a theme change restyles every card.
@@ -369,6 +493,114 @@ literal `"#RRGGBB"` / `"#AARRGGBB"`. Prefer tokens, so a theme change restyles e
 **Text styles** (`style`) are a theme token: `display`, `title`, `body`, `caption`. Default
 `body`.
 
+### 7.2 Fields
+
+Fields take input, and exist only in a **form card** (section 4), at most 12 of them, never inside a
+repeated block. Typed values are stored with the conversation, shown in the console's conversation
+view and read by the model, exactly like typed chat text: there are no password or secret fields.
+
+Every field block has, besides the properties of section 7:
+
+| Property | Type | Meaning |
+|---|---|---|
+| `field` | string | Required. The key its value is stored and sent under (section 6.5): `lower_snake_case`, 1 to 40 characters, unique in the card. It need not be one of the tool's arguments. |
+| `label` | value | Required. Always visible above the field (beside a checkbox or switch). |
+| `hint` | value | Help under the field. An error takes its place. |
+| `value` | literal | What it starts with when the assistant fills nothing in. |
+| `checks` | list | What a value must pass (below). |
+
+The five blocks:
+
+| Block | Own properties | Draws |
+|---|---|---|
+| `TextField` | `input` (`text` default, `multiline`, `number`, `email`, `phone`), `placeholder` (a format example, never the label), `maxLength` (1 to 4000, default 500) | A box to type into. `input` sets the keyboard and an automatic check. `value` is a string, or a number for `number`. |
+| `Checkbox` | — | A box to tick. `value` is `true` or `false`. |
+| `Switch` | — | An on and off switch. `value` is `true` or `false`. |
+| `Select` | `options` (1 to 50 of `{"value": string of 1 to 64 characters, "label": value}`, values unique), `multiple` (bool), `look` (`dropdown` default, `list`, `chips`), `placeholder` | One option, or several when `multiple`. `dropdown` opens the options in a bottom sheet; `list` is radio rows (checkbox rows when `multiple`); `chips` is chips. `value` is one option's `value`, or a list of them when `multiple`. |
+| `DateField` | `min`, `max` (`YYYY-MM-DD` or `"today"`) | A date picked from a calendar. `value` is `YYYY-MM-DD` or `"today"`. |
+
+A `TextField` with `input: number` is for a quantity of at most 15 digits. Leading zeros are not
+kept, so account numbers, card numbers and codes belong in a `text` field.
+
+A field is drawn with a `chip` fill, corners of `radius.button`, its text in `body` and `on_surface`,
+its label and hint in `caption` and `muted`, an `accent` outline when focused, and its error in the
+`error` colour (section 9). It is at least 48 px tall. A multiple `Select` keeps its options' order
+whatever order they were picked in, and tapping a picked option clears it. Strings in `label`,
+`hint`, `placeholder`, an option's `label` and a check's `message` are at most 500 characters.
+
+Once a form is answered or locked (and in a card that is not a form), each field is its label, then
+its value as text: text as typed; a number as written; `✓` for true and `—` for false; the picked
+options' labels joined by `", "`; a date in the `date` format; `—` when empty.
+
+**Checks.** `checks` is a list of rules, at most one of each rule per field:
+
+```json
+"checks": [ { "rule": "required" },
+            { "rule": "length", "min": 2, "max": 60, "message": { "uz": "…", "ru": "…", "en": "2 to 60 letters" } } ]
+```
+
+| `rule` | On | Passes when |
+|---|---|---|
+| `required` | every field | It has a value. A checkbox or switch must be on. |
+| `length` (`min`, `max`) | `TextField` except `number` | The text's length is in range. |
+| `range` (`min`, `max`) | `TextField` with `input: number` | The number is in range. |
+| `items` (`min`, `max`) | `Select` with `multiple` | That many options are picked. |
+
+`min` ≤ `max`, and `length`, `range` and `items` need at least one of them. `message` is optional
+(a value, section 6.2). There are no regular expressions.
+
+**How a value is checked.** The same way on the phone before sending, in the backend when the
+answers arrive, and in the console's preview:
+
+1. A hidden field is skipped (section 6.5).
+2. A `TextField`'s text is trimmed (no other value is changed). An empty string, an empty list and
+   `null` are no value, and the key is left out; `false` is a value. An empty optional field is sent
+   as nothing, and only `required` looks at it.
+3. For a field with a value, the first failure is reported, in this order: the automatic checks, then
+   `required`, then `length`, `range` or `items`.
+
+| Automatic check | Fails when |
+|---|---|
+| `number` | `input: number` and the text is not `-?digits` with an optional `.` or `,` fraction, or it has more than 15 digits (the sign and the decimal mark aside). Sent as a JSON number (an integer when it has no fraction), a `,` read as `.`. Fifteen digits is what Dart, JavaScript and JSON all carry exactly; a longer number would reach the backend changed. |
+| `email` | `input: email` and the text is not like `name@host.tld` (no spaces, one `@`, a dot after it). |
+| `phone` | `input: phone` and, with every whitespace, `+`, `-`, `(` and `)` removed, it is not 7 to 15 digits. The value is sent as typed. |
+| `date` | Not a real date, or outside `min` and `max` (inclusive). `"today"` is the phone's local date. |
+| `option` | A value that is not one of the `Select`'s options. |
+
+`length` also fails when the text is over `maxLength` (default 500, always checked). Lengths count
+UTF-16 code units, as Dart and JavaScript do.
+
+**The words.** An error shows the failing check's own `message` when it has one; otherwise the SDK's
+words, in the user's language (`{min}` and `{max}` are filled in). For `length`, `range` and `items`
+the `_min` words are used when only `min` is set, and the `_max` words when only `max`; the
+automatic checks always use the SDK's words. The last five are the form's own status lines and
+buttons.
+
+| Key | uz | ru | en |
+|---|---|---|---|
+| `required` | Bu maydonni to‘ldiring | Заполните это поле | Fill this in |
+| `length` | {min} tadan {max} tagacha belgi kiriting | От {min} до {max} символов | Use {min} to {max} characters |
+| `length_min` | Kamida {min} ta belgi kiriting | Не меньше {min} символов | Use at least {min} characters |
+| `length_max` | Ko‘pi bilan {max} ta belgi kiriting | Не больше {max} символов | Use at most {max} characters |
+| `range` | {min} dan {max} gacha son kiriting | Введите число от {min} до {max} | Enter a number from {min} to {max} |
+| `range_min` | {min} yoki undan katta son kiriting | Введите {min} или больше | Enter {min} or more |
+| `range_max` | {max} yoki undan kichik son kiriting | Введите {max} или меньше | Enter {max} or less |
+| `items` | {min} tadan {max} tagacha tanlang | Выберите от {min} до {max} | Choose {min} to {max} |
+| `items_min` | Kamida {min} tasini tanlang | Выберите не меньше {min} | Choose at least {min} |
+| `items_max` | Ko‘pi bilan {max} tasini tanlang | Выберите не больше {max} | Choose at most {max} |
+| `number` | Son kiriting | Введите число | Enter a number |
+| `email` | Elektron pochta manzilini kiriting | Введите адрес почты | Enter an email address |
+| `phone` | Telefon raqamini kiriting | Введите номер телефона | Enter a phone number |
+| `date` | Boshqa sanani tanlang | Выберите другую дату | Choose another date |
+| `option` | Variantlardan birini tanlang | Выберите один из вариантов | Choose one of the options |
+| `sent` | Yuborildi | Отправлено | Sent |
+| `not_answered` | Javob berilmadi | Без ответа | Not answered |
+| `not_sent` | Yuborilmadi. Qayta urinib ko‘ring. | Не отправлено. Попробуйте ещё раз. | Not sent. Try again. |
+| `update_app` | Javob berish uchun ilovani yangilang. | Обновите приложение, чтобы ответить. | Update the app to answer this. |
+| `choose` | Tanlang | Выбрать | Choose |
+
+`catalog/zehn.basic.json` carries this table as `words`, so the console can draw the same text.
+
 ---
 
 ## 8. Actions
@@ -377,16 +609,20 @@ literal `"#RRGGBB"` / `"#AARRGGBB"`. Prefer tokens, so a theme change restyles e
 "action": { "name": "open_route", "args": { "route": "/venues/{/public_id}" } }
 ```
 
-Only three actions exist. Anything else is ignored by the SDK (and logged in debug builds).
+Only four actions exist. Anything else is ignored by the SDK (and logged in debug builds).
 
 | `name` | `args` | What happens |
 |---|---|---|
 | `open_route` | `route`: a path starting with `/` | Closes the chat and asks the app's router to open it. |
 | `ask` | `text` | Sends `text` as the user's next question, as if typed. |
 | `open_url` | `url`: `https:`, `tel:` or `mailto:` only | Opens the browser, the dialer or the mail app. |
+| `submit` | none | Checks the form's fields and sends the answers (section 4). Only on a `Button`, and only in a form card, which has exactly one. (`v1`) |
 
 Each argument is a value (section 6.2), so it can use data:
 `{"url": {"path": "/website"}}`, `{"url": "tel:{/phone}"}`, `{"text": {"uz": "Bugun qanday filmlar bor?", "en": "What's on today?"}}`.
+
+The other three stay allowed in a form card; `ask` sends its text, which locks the form like any
+typed message.
 
 Careful with URLs: if the data already contains `https://`, use the path directly. Don't build
 `"https://{/website}"` or you get `https://https://…`.
@@ -409,7 +645,8 @@ the chat itself both read it.
     "image_bg":   "#08FFFFFF",
     "border":     "#0DFFFFFF",
     "accent":     "#FFBE7C6C",
-    "on_accent":  "#FFFFFFFF"
+    "on_accent":  "#FFFFFFFF",
+    "error":      "#FFD64545"
   },
   "text": {
     "display": { "size": 30, "weight": 500, "height": 1.15 },
@@ -431,10 +668,11 @@ the chat itself both read it.
 | `colors.image_bg` | Behind images while they load. |
 | `colors.border` | `InfoRow` and `Divider` lines. |
 | `colors.accent`, `colors.on_accent` | Primary buttons, and the chat's send button and links. |
+| `colors.error` | Optional. A field's error text and outline. Missing: `#FFD64545`, the chat's own red. |
 | `text.*` | `size` (px), `weight` (100–900), `height` (line height as a multiple), and optionally `letterSpacing` (em, e.g. `-0.01`). |
 | `radius.*` | Corner radii in px. `chip` and `button` are used by those blocks. |
 
-Send **all** colour tokens. The SDK's built-in fallbacks are meant for dark cards, so a missing
+Send **all** colour tokens (`error` is the only optional one). The SDK's built-in fallbacks are meant for dark cards, so a missing
 token can produce, for example, white text on a white card.
 
 ---
@@ -453,16 +691,20 @@ the SDK's own neutral text.
 The SDK never crashes on a bad template; it just draws less. Catch problems in the console instead:
 
 1. `createSurface.components` is a list; every item has a unique string `id` and a `component`.
-2. `component` is one of the 11 blocks in section 7.
+2. `component` is one of the blocks in section 7.
 3. `root` exists; every `child` / `children` id exists; no cycles; depth ≤ 32.
 4. `icon` values are from the icon list; `style` is a text token; colours are tokens or `#hex`.
-5. `action.name` is `open_route` / `ask` / `open_url`, with the matching argument.
+5. `action.name` is `open_route` / `ask` / `open_url`, with the matching argument, or `submit`
+   (no arguments, on a `Button` of a form card).
 6. Literal `src` values are `https://` URLs; literal `open_url` values use `https:`, `tel:` or `mailto:`.
 7. Every data path the template uses exists in a sample of the linked tool's (trimmed) result:
    catches typos like `/workng_hours`.
 8. `route` components: the route starts with `/`, and every `{name}` placeholder is a key the
    props will have.
 9. The total template size stays small (aim under 16 KB).
+10. A form card (section 7.2): `inline`, 1 to 12 fields with unique keys, exactly one `submit`
+    button, no field inside a repeated block, and every field's value, options and checks as
+    section 7.2 says. Fields and `submit` appear in no other card.
 
 A JSON Schema for checks 1–6 is in the appendix.
 
@@ -557,6 +799,8 @@ font, drawn natively.
 | Unknown action, or `open_url` with another scheme | The tap does nothing. |
 | `route` event without `route` (or not starting with `/`), and no app widget | Nothing happens. |
 | Write without a confirmed `action_id` | Not made; the model reads `not_confirmed`. |
+| A block the phone does not know, in a form card | None of the form is drawn: the card says "Update the app to answer this." A form that silently lost a field must not be sendable. |
+| A field in a card that is not a form (a result or confirm card, or `ZiSurfaceView` drawn alone) | The field is read-only: its label and its value as text. A `submit` button draws nothing. |
 
 Nothing in a template can crash the app or run code. A tap can only open an app route, ask a
 question, or open an `https:`, `tel:` or `mailto:` link; images load only over `http(s)`.
@@ -597,8 +841,9 @@ console.
 and gzips well. In return the phone keeps nothing that can go stale: a fix in the console shows up
 on the next card. Cache templates on the backend, not on the phone.
 
-**How do I add a new block or icon?** That's an SDK change (a new catalog version). Keep templates
-on `zehn.basic.v0` until then.
+**How do I add a new block or icon?** That's an SDK change (a new catalog version, such as
+`zehn.basic.v1`). A card that uses a new block is served only to SDKs that have it; an older app
+never gets it, and its assistant answers in text instead.
 
 **Do I need to localize data on the server?** No. Send the `{uz, ru, en}` objects as they come from
 the customer's API; the SDK picks the user's language.
@@ -610,7 +855,7 @@ the customer's API; the SDK picks the user's language.
 ```json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://zehnmind.ai/schemas/zehn.basic.v0/surface.json",
+  "$id": "https://zehnmind.ai/schemas/zehn.basic.v1/surface.json",
   "type": "object",
   "required": ["createSurface"],
   "properties": {
@@ -619,7 +864,7 @@ the customer's API; the SDK picks the user's language.
       "required": ["components"],
       "properties": {
         "surfaceId": { "type": "string" },
-        "catalogId": { "const": "zehn.basic.v0" },
+        "catalogId": { "enum": ["zehn.basic.v0", "zehn.basic.v1"] },
         "root": { "type": "string", "default": "root" },
         "components": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/block" } }
       }
@@ -629,7 +874,10 @@ the customer's API; the SDK picks the user's language.
     "value": {
       "oneOf": [
         { "type": ["string", "number", "boolean", "null"] },
-        { "type": "object", "required": ["path"], "properties": { "path": { "type": "string" } }, "additionalProperties": false },
+        { "type": "object", "required": ["path"],
+          "properties": { "path": { "type": "string" }, "format": { "type": "string" },
+                          "equals": { "type": ["string", "number", "boolean"] } },
+          "additionalProperties": false },
         {
           "type": "object",
           "minProperties": 1,
@@ -641,6 +889,21 @@ the customer's API; the SDK picks the user's language.
     "color": { "type": "string", "pattern": "^(#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})|[a-z_]+)$" },
     "radius": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string", "pattern": "^[a-z_]+$" }] },
     "icon": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
+    "place": { "enum": ["center", "top", "bottom", "start", "end", "top_start", "top_end", "bottom_start", "bottom_end"] },
+    "date": { "type": "string", "pattern": "^(today|\\d{4}-\\d{2}-\\d{2})$" },
+    "options": {
+      "type": "array", "minItems": 1, "maxItems": 50,
+      "items": { "type": "object", "required": ["value", "label"],
+                 "properties": { "value": { "type": "string", "minLength": 1, "maxLength": 64 },
+                                 "label": { "$ref": "#/$defs/value" } } }
+    },
+    "checks": {
+      "type": "array", "maxItems": 4,
+      "items": { "type": "object", "required": ["rule"],
+                 "properties": { "rule": { "enum": ["required", "length", "range", "items"] },
+                                 "min": { "type": "number" }, "max": { "type": "number" },
+                                 "message": { "$ref": "#/$defs/value" } } }
+    },
     "children": {
       "oneOf": [
         { "type": "array", "items": { "type": "string" } },
@@ -661,7 +924,8 @@ the customer's API; the SDK picks the user's language.
                           "args": { "type": "object", "required": ["text"], "properties": { "text": { "$ref": "#/$defs/value" } } } } },
         { "type": "object", "required": ["name", "args"],
           "properties": { "name": { "const": "open_url" },
-                          "args": { "type": "object", "required": ["url"], "properties": { "url": { "$ref": "#/$defs/value" } } } } }
+                          "args": { "type": "object", "required": ["url"], "properties": { "url": { "$ref": "#/$defs/value" } } } } },
+        { "type": "object", "required": ["name"], "properties": { "name": { "const": "submit" } } }
       ]
     },
     "block": {
@@ -669,7 +933,8 @@ the customer's API; the SDK picks the user's language.
       "required": ["id", "component"],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "component": { "enum": ["Box", "Column", "Row", "Image", "Text", "Icon", "Chip", "Header", "InfoRow", "Button", "Divider"] },
+        "component": { "enum": ["Box", "Column", "Row", "Image", "Text", "Icon", "Chip", "Header", "InfoRow", "Button", "Divider",
+                                "Stack", "Wrap", "Progress", "Avatar", "TextField", "Checkbox", "Switch", "Select", "DateField"] },
         "visible": { "$ref": "#/$defs/value" },
         "width": { "type": "number", "minimum": 0 },
         "height": { "type": "number", "minimum": 0 },
@@ -695,7 +960,7 @@ the customer's API; the SDK picks the user's language.
         "justify": { "enum": ["start", "center", "end", "space_between", "space_around", "space_evenly"] },
         "fit": { "enum": ["cover", "fill", "contain"] },
         "spans": { "type": ["array", "object"] },
-        "size": { "type": "number", "minimum": 6, "maximum": 96 },
+        "size": { "type": "number", "minimum": 6, "maximum": 160 },
         "weight": { "type": "integer", "minimum": 100, "maximum": 900, "multipleOf": 100 },
         "lineHeight": { "type": "number", "minimum": 0.8, "maximum": 3 },
         "letterSpacing": { "type": "number", "minimum": -0.2, "maximum": 0.5 },
@@ -712,7 +977,22 @@ the customer's API; the SDK picks the user's language.
         "style": { "enum": ["display", "title", "body", "caption"] },
         "maxLines": { "type": "integer", "minimum": 1 },
         "icon": { "$ref": "#/$defs/icon" },
-        "variant": { "enum": ["primary", "secondary"] }
+        "variant": { "enum": ["primary", "secondary"] },
+        "position": { "$ref": "#/$defs/place" },
+        "runGap": { "type": "number", "minimum": 0 },
+        "track": { "$ref": "#/$defs/color" },
+        "field": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,39}$" },
+        "hint": { "$ref": "#/$defs/value" },
+        "value": { "oneOf": [{ "$ref": "#/$defs/value" }, { "type": "array", "items": { "type": "string" } }] },
+        "checks": { "$ref": "#/$defs/checks" },
+        "input": { "enum": ["text", "multiline", "number", "email", "phone"] },
+        "placeholder": { "$ref": "#/$defs/value" },
+        "maxLength": { "type": "integer", "minimum": 1, "maximum": 4000 },
+        "options": { "$ref": "#/$defs/options" },
+        "multiple": { "type": "boolean" },
+        "look": { "enum": ["dropdown", "list", "chips"] },
+        "min": { "$ref": "#/$defs/date" },
+        "max": { "$ref": "#/$defs/date" }
       }
     }
   }
@@ -721,3 +1001,8 @@ the customer's API; the SDK picks the user's language.
 
 The schema doesn't check that ids referenced by `root`, `child` and `children` exist, or that
 there are no cycles. Do those two checks in code.
+
+It is also looser than the catalog on purpose: a property is typed the same on every block (`size`
+allows 6 to 160, though `Text` and `Icon` stop at 96), and it does not know which block takes
+which property, nor the rules of a form card (section 7.2). The backend's `spec.schema.json` is the
+authority; `catalog/zehn.basic.json` lists each block's properties and ranges.

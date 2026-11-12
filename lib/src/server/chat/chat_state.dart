@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import '../surface/form_draft.dart';
+
 /// One thing shown in the chat.
 sealed class ZiChatItem extends Equatable {
   const ZiChatItem();
@@ -87,6 +89,45 @@ final class ZiConfirmItem extends ZiChatItem {
 
   @override
   List<Object?> get props => [actionId, tool, method, surface, data, label, status];
+}
+
+/// A card with fields (the `form` event) waiting for, or past, the user's
+/// send. What they typed lives in the cubit's drafts, never here.
+final class ZiFormItem extends ZiChatItem {
+  const ZiFormItem({
+    required this.formId,
+    required this.callId,
+    required this.component,
+    required this.tool,
+    required this.surface,
+    this.data = const {},
+    this.status = ZiFormStatus.pending,
+  });
+
+  final String formId;
+  final String callId;
+  final String component;
+  final String tool;
+
+  /// The card's template, as it came.
+  final Map<String, Object?> surface;
+
+  /// What the template reads: the event's `props`.
+  final Map<String, Object?> data;
+  final ZiFormStatus status;
+
+  ZiFormItem withStatus(ZiFormStatus next) => ZiFormItem(
+    formId: formId,
+    callId: callId,
+    component: component,
+    tool: tool,
+    surface: surface,
+    data: data,
+    status: next,
+  );
+
+  @override
+  List<Object?> get props => [formId, callId, component, tool, surface, data, status];
 }
 
 final class ZiErrorItem extends ZiChatItem {

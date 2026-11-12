@@ -10,11 +10,13 @@ import 'package:zehn_intelligence/src/server/api/api_client.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_settings.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
 import 'package:zehn_intelligence/src/server/chat/history.dart';
+import 'package:zehn_intelligence/src/server/surface/surface_view.dart';
 import 'package:zehn_intelligence/src/server/ui/chat_sheet.dart';
 import 'package:zehn_intelligence/src/server/ui/voice.dart';
 import 'package:zehn_intelligence/zehn_intelligence.dart' show ZiComponentController;
 
 import '../../support/chat_fakes.dart';
+import '../../support/form_cards.dart';
 import '../../support/history_fakes.dart';
 
 typedef ComponentBuilder = Widget Function(BuildContext, Map<String, Object?>, ZiComponentController);
@@ -662,6 +664,210 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Where is the cinema?'), findsOneWidget);
       expect(find.text('Something went wrong.'), findsOneWidget);
+    });
+  });
+
+  group('forms', () {
+    FormEvent book({Map<String, Object?> prefill = const {}, Map<String, Object?> surface = bookCard}) => FormEvent(
+        callId: 'c3', formId: 'f1', component: 'book_table', tool: 'bookings.create', surface: surface,
+        props: {'form': prefill}, turnId: 't1');
+    Finder box(String id) => find.descendant(of: find.byKey(ValueKey('zi-field-f1-$id')), matching: find.byType(EditableText));
+    Finder nameBox() => box('name');
+    Finder chatList() => find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first;
+    final longAnswer = TextDelta(text: List.filled(60, 'A long answer.').join('\n\n'));
+    Future<void> showForm(WidgetTester tester, {Map<String, Object?> prefill = const {}}) async {
+      turns.script([started, book(prefill: prefill), done]);
+      await open(tester);
+      await type(tester, 'book a table');
+    }
+
+    testWidgets('a form card is drawn from the event with what is prefilled', (tester) async {
+      await showForm(tester, prefill: {'name': 'Ali'});
+      expect(find.text('Your name'), findsOneWidget);
+      expect(tester.widget<EditableText>(nameBox()).controller.text, 'Ali');
+    });
+
+    testWidgets('Send sends the values; the card turns into label and value lines and says Sent', (tester) async {
+      await showForm(tester, prefill: {'name': 'Ali'});
+      turns.script([started, const TextDelta(text: 'Booking…'), done]);
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pumpAndSettle();
+      expect((turns.starts.last.input['values']! as Map)['name'], 'Ali');
+      expect(nameBox(), findsNothing);
+      expect(find.text('Ali'), findsOneWidget);
+      expect(find.text('Sent'), findsOneWidget);
+    });
+
+    testWidgets('a failing field keeps the form open with its error under it', (tester) async {
+      await showForm(tester);
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pumpAndSettle();
+      expect(turns.starts, hasLength(1));
+      expect(find.text('Fill this in'), findsOneWidget);
+    });
+
+    testWidgets('typing in the chat\'s own input keeps the form\'s parsed template and what is typed', (tester) async {
+      await showForm(tester);
+      await tester.enterText(nameBox(), 'Ali');
+      final before = tester.widget<ZiSurfaceView>(find.byType(ZiSurfaceView)).surface;
+      await tester.enterText(find.byType(TextField).last, 'one more thing');
+      await tester.pump();
+      expect(identical(tester.widget<ZiSurfaceView>(find.byType(ZiSurfaceView)).surface, before), isTrue);
+      expect(tester.widget<EditableText>(nameBox()).controller.text, 'Ali');
+    });
+
+    testWidgets('a result card is parsed once too', (tester) async {
+      turns.script([started,
+        const MountComponent(callId: 'm1', component: 'cinema_details', kind: 'inline', props: {'name': 'Cinematica'}, surface: cinemaCard),
+        done]);
+      await open(tester);
+      await type(tester, 'kino');
+      final before = tester.widget<ZiSurfaceView>(find.byType(ZiSurfaceView)).surface;
+      await tester.enterText(find.byType(TextField), 'x');
+      await tester.pump();
+      expect(identical(tester.widget<ZiSurfaceView>(find.byType(ZiSurfaceView)).surface, before), isTrue);
+    });
+
+    testWidgets('typing in a field does not move the chat', (tester) async {
+      turns.script([started, book(), longAnswer, done]);
+      await open(tester);
+      await type(tester, 'book a table');
+      await tester.scrollUntilVisible(nameBox(), -200, scrollable: chatList());
+      final position = tester.state<ScrollableState>(chatList()).position;
+      final at = position.pixels;
+      await tester.enterText(nameBox(), 'Ali');
+      await tester.pump();
+      expect(position.pixels, at);
+    });
+
+    testWidgets('what is typed survives the field scrolling out of the list, and the chat closing', (tester) async {
+      turns.script([started, book(), longAnswer, done]);
+      await open(tester);
+      await type(tester, 'book a table');
+      await tester.scrollUntilVisible(nameBox(), -200, scrollable: chatList());
+      await tester.enterText(nameBox(), 'Ali');
+      FocusManager.instance.primaryFocus?.unfocus(); // a focused field is kept alive; an idle one is not
+      await tester.pump();
+      await tester.drag(chatList(), const Offset(0, -5000));
+      await tester.pumpAndSettle();
+      expect(nameBox(), findsNothing);
+      await tester.scrollUntilVisible(nameBox(), -200, scrollable: chatList());
+      expect(tester.widget<EditableText>(nameBox()).controller.text, 'Ali');
+      Navigator.of(tester.element(find.byType(ZiChatSheet))).pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(nameBox(), 200, scrollable: chatList());
+      expect(tester.widget<EditableText>(nameBox()).controller.text, 'Ali');
+    });
+
+    testWidgets('the field being typed in stays above the keyboard', (tester) async {
+      turns.script([started, longAnswer, book(), done]); // the form is the last thing, at the foot of the chat
+      await open(tester);
+      await type(tester, 'book a table');
+      await tester.tap(box('phone'));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      final keyboardTop = (tester.view.physicalSize.height - 900) / tester.view.devicePixelRatio;
+      expect(tester.getBottomLeft(box('phone')).dy, lessThanOrEqualTo(keyboardTop));
+    });
+
+    testWidgets('a failed Send above the list brings the first failing field into view with its label and error', (tester) async {
+      const tallCard = <String, Object?>{'createSurface': {'root': 'root', 'components': [
+        {'id': 'root', 'component': 'Column', 'gap': 12, 'children': ['name', 'phone', 'email', 'city', 'guests', 'notes', 'send']},
+        {'id': 'name', 'component': 'TextField', 'field': 'name', 'label': 'Your name', 'checks': [{'rule': 'required'}]},
+        {'id': 'phone', 'component': 'TextField', 'field': 'phone', 'label': 'Phone', 'input': 'phone'},
+        {'id': 'email', 'component': 'TextField', 'field': 'email', 'label': 'Email', 'input': 'email'},
+        {'id': 'city', 'component': 'TextField', 'field': 'city', 'label': 'City'},
+        {'id': 'guests', 'component': 'TextField', 'field': 'guests', 'label': 'Guests', 'input': 'number'},
+        {'id': 'notes', 'component': 'TextField', 'field': 'notes', 'label': 'Notes', 'input': 'multiline'},
+        {'id': 'send', 'component': 'Button', 'label': 'Book', 'action': {'name': 'submit'}}]}};
+      turns.script([started, book(surface: tallCard), done]);
+      await open(tester);
+      await type(tester, 'book a table');
+      tester.view.viewInsets = const FakeViewPadding(bottom: 900);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      final position = tester.state<ScrollableState>(chatList()).position;
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      final list = tester.getRect(chatList());
+      expect(tester.getRect(find.text('Your name')).top, lessThan(list.top)); // the form is taller than the list
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pumpAndSettle();
+      expect(turns.starts, hasLength(1));
+      for (final part in [find.text('Your name'), nameBox(), find.byKey(const ValueKey('zi-error-name'))]) {
+        final rect = tester.getRect(part);
+        expect(rect.top, greaterThanOrEqualTo(list.top));
+        expect(rect.bottom, lessThanOrEqualTo(list.bottom));
+      }
+    });
+
+    testWidgets('back to a new chat, then the conversation from the history, shows what was typed into its form', (tester) async {
+      final history = FakeHistory()
+        ..saved = [summary('c1', title: 'Table for two')]
+        ..transcripts['c1'] = const [
+          ZiUserItem('book a table'),
+          ZiFormItem(formId: 'f1', callId: 'c3', component: 'book_table', tool: 'bookings.create', surface: bookCard, data: {'form': {}}),
+        ];
+      turns.script([started, book(), done]);
+      await open(tester, history: history);
+      await type(tester, 'book a table');
+      await tester.enterText(nameBox(), 'Vali');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('zi-back')));
+      await tester.pumpAndSettle();
+      expect(find.text('How can I help you?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('zi-history')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Table for two'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<EditableText>(nameBox()).controller.text, 'Vali');
+    });
+
+    testWidgets('no follow-up chips while a form waits for the person; they come back once it is answered', (tester) async {
+      turns.script([started, book(prefill: {'name': 'Ali'}), const SuggestionsEvent(items: ['Tell me more'], turnId: 't1'), done]);
+      await open(tester);
+      await type(tester, 'book a table');
+      expect(cubit.state.suggestions, ['Tell me more']);
+      expect(find.text('Tell me more'), findsNothing);
+      turns.script([started, const SuggestionsEvent(items: ['Tell me more'], turnId: 't2'), done]);
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pumpAndSettle();
+      expect(find.text('Sent'), findsOneWidget);
+      expect(find.text('Tell me more'), findsOneWidget);
+    });
+
+    testWidgets('a form with a block this build cannot draw shows the update line and no fields', (tester) async {
+      turns.script([started, book(surface: const {'createSurface': {'root': 'root', 'components': [
+        {'id': 'root', 'component': 'Column', 'children': ['name', 'stars']},
+        {'id': 'name', 'component': 'TextField', 'field': 'name', 'label': 'Your name'},
+        {'id': 'stars', 'component': 'Slider', 'field': 'stars', 'label': 'Stars'}]}}), done]);
+      await open(tester);
+      await type(tester, 'rate');
+      expect(tester.widget<Text>(find.byKey(const ValueKey('zi-form-update'))).data, 'Update the app to answer this.');
+      expect(find.text('Your name'), findsNothing);
+    });
+
+    testWidgets('no "Thinking…" while a form waits for the person; it shows while the answers are being sent', (tester) async {
+      final showing = StreamController<TurnEvent>();
+      turns.legs.add(showing.stream);
+      await open(tester);
+      await type(tester, 'book a table');
+      showing..add(started)..add(book(prefill: {'name': 'Ali'}));
+      await tester.pump(Duration.zero); // delivers the events, then draws the frame they ask for
+      expect(find.byKey(const ValueKey('zi-form-send')), findsOneWidget);
+      expect(find.text('Thinking…'), findsNothing); // the turn still runs, but the next move is the person's
+      showing.add(done);
+      await showing.close();
+      await tester.pumpAndSettle();
+      final sending = StreamController<TurnEvent>();
+      addTearDown(sending.close);
+      turns.legs.add(sending.stream);
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pump();
+      expect(find.text('Thinking…'), findsOneWidget);
     });
   });
 }
