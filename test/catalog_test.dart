@@ -11,13 +11,6 @@ import 'package:zehn_intelligence/src/server/surface/surface.dart';
 import 'package:zehn_intelligence/src/server/surface/surface_view.dart';
 import 'package:zehn_intelligence/src/version.dart';
 
-/// What the file lists but the renderer does not draw yet.
-const _notYet = (
-  blocks: {'DateField'},
-  actions: <String>{},
-  common: <String>{},
-);
-
 /// `catalog/zehn.basic.json` is what the console's analyzer reads to draft
 /// cards for this SDK. It must list exactly what `surface_view.dart` draws.
 void main() {
@@ -34,10 +27,10 @@ void main() {
   });
 
   test('lists exactly the blocks, icons, formats and actions the SDK draws', () {
-    expect(blocks.keys.toSet(), {...ziCatalog, ..._notYet.blocks});
+    expect(blocks.keys.toSet(), ziCatalog);
     expect(names('icons'), ziIcons.keys.toSet());
     expect(names('formats'), ziFormats);
-    expect((catalog['actions']! as Map).keys.toSet(), {...ziAllowedActions, ..._notYet.actions});
+    expect((catalog['actions']! as Map).keys.toSet(), ziAllowedActions);
   });
 
   test('every block says when to use it, and every property has a known type', () {
@@ -131,7 +124,7 @@ void main() {
           ),
         ));
       }
-      final listed = {...common.keys.toSet().difference(_notYet.common), ...(blocks[name]!['props']! as Map).keys.cast<String>(),
+      final listed = {...common.keys, ...(blocks[name]!['props']! as Map).keys.cast<String>(),
         if (isField) ...(catalog['field']! as Map).keys.cast<String>(),
       };
       expect(spy.reads, listed);
