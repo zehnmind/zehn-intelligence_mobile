@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zehn_intelligence/src/server/surface/form_draft.dart';
 import 'package:zehn_intelligence/src/server/surface/form_words.dart';
 import 'package:zehn_intelligence/src/server/surface/formats.dart';
 import 'package:zehn_intelligence/src/server/surface/surface.dart';
@@ -12,7 +13,7 @@ import 'package:zehn_intelligence/src/version.dart';
 
 /// What the file lists but the renderer does not draw yet.
 const _notYet = (
-  blocks: {'TextField', 'Checkbox', 'Switch', 'Select', 'DateField'},
+  blocks: {'Checkbox', 'Switch', 'Select', 'DateField'},
   actions: <String>{},
   common: <String>{},
 );
@@ -102,6 +103,8 @@ void main() {
         if (name == 'Box') 'child': 'leaf',
         if (name == 'Column' || name == 'Row' || name == 'Stack' || name == 'Wrap') 'children': ['leaf'],
       });
+      final isField = blocks[name]!['group'] == 'field';
+      if (isField) spy.addAll({'field': 'f', 'label': 'L'});
       // Under a Column the block's flex is read, under a Stack its position.
       for (final parent in ['Column', 'Stack']) {
         final surface = ZiSurface.parse({
@@ -114,13 +117,22 @@ void main() {
             ],
           },
         });
+        // A field block is drawn as a pending form, so the draft's reads count too.
+        // The field is already left, so its error is looked up and the checks are read.
+        final form = isField
+            ? ZiFormScope(formId: 'f', draft: ZiFormDraft(surface)..touch('f'), onSubmit: () {})
+            : null;
         await tester.pumpWidget(MaterialApp(
           home: Scaffold(
-            body: ZiSurfaceView(surface: surface, data: const {}, theme: const ZiTheme({}), language: 'en', onAction: (_) {}),
+            body: ZiSurfaceView(
+              surface: surface, data: const {}, theme: const ZiTheme({}), language: 'en', onAction: (_) {}, form: form,
+            ),
           ),
         ));
       }
-      final listed = {...common.keys.toSet().difference(_notYet.common), ...(blocks[name]!['props']! as Map).keys.cast<String>()};
+      final listed = {...common.keys.toSet().difference(_notYet.common), ...(blocks[name]!['props']! as Map).keys.cast<String>(),
+        if (isField) ...(catalog['field']! as Map).keys.cast<String>(),
+      };
       expect(spy.reads, listed);
     });
   }
