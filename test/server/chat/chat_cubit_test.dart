@@ -7,8 +7,10 @@ import 'package:zehn_intelligence/src/server/api/turn_events.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_cubit.dart';
 import 'package:zehn_intelligence/src/server/chat/chat_state.dart';
 import 'package:zehn_intelligence/src/server/chat/history.dart';
+import 'package:zehn_intelligence/src/server/surface/form_draft.dart';
 
 import '../../support/chat_fakes.dart';
+import '../../support/form_cards.dart';
 
 class ThrowingRunner extends FakeRunner {
   @override
@@ -589,6 +591,152 @@ void main() {
       await cubit.replay('t1');
       expect(audio.clips, isEmpty);
       expect(cubit.state.playing, isNull);
+    });
+  });
+
+  group('forms', () {
+    FormEvent book({Map<String, Object?> prefill = const {}, Map<String, Object?> surface = bookCard}) => FormEvent(
+        callId: 'c3', formId: 'f1', component: 'book_table', tool: 'bookings.create', surface: surface,
+        props: {'form': prefill}, turnId: 't1');
+    ZiFormItem form() => cubit.state.items.whereType<ZiFormItem>().single;
+    Future<void> shown({Map<String, Object?> prefill = const {'name': 'Ali', 'phone': '+998 90 123 45 67'}}) async {
+      turns.script([started, book(prefill: prefill), done]);
+      await cubit.sendText('book a table');
+    }
+    TurnFailed refused(String code, [Map<String, Object?> params = const {}]) =>
+        TurnFailed(ZiApiException(code, status: 409, params: params), turnId: 't2');
+
+    test('a form event adds a pending form and a draft holding the prefill', () async {
+      await shown(prefill: {'name': 'Ali'});
+      expect(form().status, ZiFormStatus.pending);
+      expect(cubit.formDraft('f1')!.raw, {'name': 'Ali'});
+    });
+    test('a broken template shows no form', () async {
+      turns.script([started, book(surface: const {'nope': 1}), done]);
+      await cubit.sendText('book');
+      expect(cubit.state.items.whereType<ZiFormItem>(), isEmpty);
+    });
+    test('Send with a failing field sends nothing and shows the error', () async {
+      await shown(prefill: const {});
+      await cubit.submitForm('f1');
+      expect(turns.starts, hasLength(1));
+      expect(form().status, ZiFormStatus.pending);
+      expect(cubit.formDraft('f1')!.errorOf('name')?.rule, 'required');
+    });
+    test('Send starts a turn with the values on the conversation; sent once the server starts it', () async {
+      await shown();
+      final leg = StreamController<TurnEvent>();
+      turns.legs.add(leg.stream);
+      final sending = cubit.submitForm('f1');
+      await pumpEventQueue();
+      expect(form().status, ZiFormStatus.sending);
+      expect(turns.starts.last.conversationId, 'c1');
+      expect(turns.starts.last.input,
+          {'type': 'form', 'form_id': 'f1', 'values': {'name': 'Ali', 'phone': '+998 90 123 45 67'}});
+      leg.add(const TurnStarted(conversationId: 'c1', conversationNew: false, turnId: 't2'));
+      await pumpEventQueue();
+      expect(form().status, ZiFormStatus.submitted);
+      leg.add(done);
+      await leg.close();
+      await sending;
+      expect((form().status, cubit.state.busy), (ZiFormStatus.submitted, false));
+      expect(cubit.state.items.whereType<ZiUserItem>(), hasLength(1)); // no bubble for the form
+    });
+    test('two quick taps on Send start one turn', () async {
+      await shown();
+      turns.script([started, done]);
+      await Future.wait([cubit.submitForm('f1'), cubit.submitForm('f1')]);
+      expect(turns.starts.where((t) => t.isForm), hasLength(1));
+    });
+    test('form_invalid puts the errors on their fields and keeps the form open', () async {
+      await shown();
+      turns.script([const TurnFailed(ZiApiException('form_invalid', status: 422,
+          params: {'errors': [{'field': 'phone', 'rule': 'phone'}]}), turnId: 't2')]);
+      await cubit.submitForm('f1');
+      expect((form().status, cubit.state.busy), (ZiFormStatus.pending, false));
+      expect(cubit.formDraft('f1')!.errorOf('phone')?.rule, 'phone');
+      expect(cubit.state.items.whereType<ZiErrorItem>(), isEmpty);
+    });
+    test('form_used takes the status the server names; form_not_found is Not answered', () async {
+      await shown();
+      turns.script([refused('form_used', {'status': 'submitted'})]);
+      await cubit.submitForm('f1');
+      expect(form().status, ZiFormStatus.submitted);
+      cubit.reset();
+      await shown();
+      turns.script([refused('form_not_found')]);
+      await cubit.submitForm('f1');
+      expect(form().status, ZiFormStatus.dismissed);
+      expect(cubit.state.items.whereType<ZiErrorItem>(), isEmpty);
+    });
+    test('any other failure, before or after the turn starts, keeps every value and says Not sent', () async {
+      await shown();
+      turns.script([failure('network_error', retryable: true)]);
+      await cubit.submitForm('f1');
+      expect((form().status, cubit.formDraft('f1')!.notSent), (ZiFormStatus.pending, true));
+      expect(cubit.formDraft('f1')!.raw['name'], 'Ali');
+      expect(cubit.state.items.last, const ZiErrorItem('network_error', retryable: true));
+      turns.script([started, failure('llm_unavailable', retryable: true)]);
+      await cubit.submitForm('f1');
+      expect((form().status, cubit.formDraft('f1')!.notSent), (ZiFormStatus.pending, true));
+    });
+    test('Retry sends the form again with what is typed now', () async {
+      await shown();
+      turns.script([failure('network_error', retryable: true)]);
+      await cubit.submitForm('f1');
+      cubit.formDraft('f1')!.set('name', 'Vali');
+      turns.script([started, done]);
+      await cubit.retry();
+      expect((turns.starts.last.input['values']! as Map)['name'], 'Vali');
+      expect((form().status, cubit.formDraft('f1')!.notSent), (ZiFormStatus.submitted, false));
+      expect(cubit.state.items.whereType<ZiErrorItem>(), isEmpty);
+    });
+    test("a conversation that can't go on locks the form, with what was typed, and resends nothing", () async {
+      await shown();
+      turns.script([refused('conversation_spec_changed')]);
+      await cubit.submitForm('f1');
+      expect(turns.starts, hasLength(2));
+      expect(form().status, ZiFormStatus.dismissed);
+      expect(cubit.formDraft('f1')!.raw['name'], 'Ali');
+      expect(cubit.state.conversationId, isNull);
+      expect(cubit.state.items.whereType<ZiErrorItem>(), isEmpty);
+    });
+    test('typing instead dismisses a pending form; so does sending another form', () async {
+      await shown();
+      turns.script([done]);
+      await cubit.sendText('later');
+      expect(form().status, ZiFormStatus.dismissed);
+      cubit.reset();
+      turns.script([started, book(), const FormEvent(callId: 'c4', formId: 'f2', component: 'book_table', tool: 'bookings.create',
+          surface: bookCard, props: {'form': {'name': 'Ali'}}, turnId: 't1'), done]);
+      await cubit.sendText('book');
+      turns.script([started, done]);
+      await cubit.submitForm('f2');
+      expect([for (final f in cubit.state.items.whereType<ZiFormItem>()) f.status],
+          [ZiFormStatus.dismissed, ZiFormStatus.submitted]);
+    });
+    test('when the turn that showed a form fails, the form locks', () async {
+      turns.script([started, book(), failure('llm_unavailable')]);
+      await cubit.sendText('book');
+      expect(form().status, ZiFormStatus.dismissed);
+    });
+    test('Send is ignored for a form with a block this build cannot draw', () async {
+      turns.script([started, book(surface: {'createSurface': {'root': 'root', 'components': [{'id': 'root', 'component': 'Slider'}]}}), done]);
+      await cubit.sendText('book');
+      await cubit.submitForm('f1');
+      expect(turns.starts, hasLength(1));
+    });
+    test('a conversation from the history brings its forms; one that cannot go on locks them', () async {
+      ZiConversation past({required bool open}) => ZiConversation(
+          summary: ZiConversationSummary(id: 'c9', title: '', createdAt: DateTime(2026), lastTurnAt: DateTime(2026), canContinue: open),
+          items: const [ZiFormItem(formId: 'f1', callId: 'h1', component: 'book_table', tool: 'bookings.create',
+              surface: bookCard, data: {'form': {'name': 'Ali'}})]);
+      cubit.resume(past(open: true));
+      expect((form().status, cubit.formDraft('f1')!.raw['name']), (ZiFormStatus.pending, 'Ali'));
+      cubit.resume(past(open: false));
+      expect(form().status, ZiFormStatus.dismissed);
+      cubit.reset();
+      expect(cubit.formDraft('f1'), isNull);
     });
   });
 }
