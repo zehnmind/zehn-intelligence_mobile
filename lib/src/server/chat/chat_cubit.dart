@@ -353,14 +353,23 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   /// that can go on takes the next question; one that can't is read-only,
   /// and its unanswered confirm cards and forms are past answering. Each form
   /// gets a draft holding what it was sent or offered with; one whose
-  /// template does not parse is left out.
+  /// template does not parse is left out. Picking the open conversation again
+  /// keeps what was typed into its forms that are still waiting.
   void resume(ZiConversation conversation) {
+    final kept = <String, ZiFormDraft>{};
+    if (conversation.id == state.conversationId) {
+      for (final item in conversation.items) {
+        if (item is ZiFormItem && item.status == ZiFormStatus.pending) {
+          if (_forms.remove(item.formId) case final draft?) kept[item.formId] = draft;
+        }
+      }
+    }
     _forget();
     final open = conversation.canContinue;
     final items = <ZiChatItem>[];
     for (final item in conversation.items) {
       if (item is ZiFormItem) {
-        final draft = _draftOf(item.surface, item.data);
+        final draft = kept.remove(item.formId) ?? _draftOf(item.surface, item.data);
         if (draft == null) continue;
         _forms[item.formId]?.dispose();
         _forms[item.formId] = draft;

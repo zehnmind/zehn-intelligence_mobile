@@ -738,5 +738,34 @@ void main() {
       cubit.reset();
       expect(cubit.formDraft('f1'), isNull);
     });
+
+    ZiConversation history(String id, ZiFormStatus status) => ZiConversation(
+        summary: ZiConversationSummary(id: id, title: '', createdAt: DateTime(2026), lastTurnAt: DateTime(2026), canContinue: true),
+        items: [ZiFormItem(formId: 'f1', callId: 'c3', component: 'book_table', tool: 'bookings.create',
+            surface: bookCard, data: const {'form': {'name': 'Sami'}}, status: status)]);
+
+    test('picking the open conversation again in the history keeps what was typed into its form', () async {
+      await shown();
+      final typed = cubit.formDraft('f1')!..set('name', 'Vali');
+      cubit.resume(history('c1', ZiFormStatus.pending));
+      expect(cubit.formDraft('f1'), same(typed));
+      expect(cubit.formDraft('f1')!.raw['name'], 'Vali');
+    });
+    test('a form the history shows as sent takes what the server holds, even in the open conversation', () async {
+      await shown();
+      final typed = cubit.formDraft('f1')!..set('name', 'Vali');
+      cubit.resume(history('c1', ZiFormStatus.submitted));
+      expect(cubit.formDraft('f1'), isNot(same(typed)));
+      expect(cubit.formDraft('f1')!.raw['name'], 'Sami');
+      expect(() => typed.addListener(() {}), throwsFlutterError); // disposed
+    });
+    test('another conversation from the history drops the drafts of the open one', () async {
+      await shown();
+      final typed = cubit.formDraft('f1')!..set('name', 'Vali');
+      cubit.resume(history('c9', ZiFormStatus.pending));
+      expect(cubit.formDraft('f1'), isNot(same(typed)));
+      expect(cubit.formDraft('f1')!.raw['name'], 'Sami');
+      expect(() => typed.addListener(() {}), throwsFlutterError); // disposed
+    });
   });
 }
