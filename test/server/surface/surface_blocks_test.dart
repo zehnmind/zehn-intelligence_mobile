@@ -77,6 +77,23 @@ void main() {
     expect(tester.getSize(find.byType(FractionallySizedBox)).height, 40);
   });
 
+  testWidgets('Progress: 120 wide where the parent gives no width, the rest of the row with flex', (tester) async {
+    await pumpBlocks(tester, [
+      {'id': 'root', 'component': 'Row', 'children': ['label', 'bar']},
+      {'id': 'label', 'component': 'Text', 'text': 'Done'},
+      {'id': 'bar', 'component': 'Progress', 'value': 0.5},
+    ]);
+    expect(tester.takeException(), isNull);
+    expect(tester.getSize(find.byType(ClipRRect)).width, 120);
+    await pumpBlocks(tester, [
+      {'id': 'root', 'component': 'Row', 'width': 300, 'children': ['label', 'bar']},
+      {'id': 'label', 'component': 'Text', 'text': 'Done'},
+      {'id': 'bar', 'component': 'Progress', 'value': 0.5, 'flex': 1},
+    ]);
+    expect(tester.takeException(), isNull);
+    expect(tester.getSize(find.byType(ClipRRect)).width, 300 - tester.getSize(find.text('Done')).width);
+  });
+
   testWidgets('Avatar: a circle; with no image, the first two letters of text', (tester) async {
     await pumpBlocks(tester, [
       {'id': 'root', 'component': 'Avatar', 'text': ' cinematica', 'size': 48},

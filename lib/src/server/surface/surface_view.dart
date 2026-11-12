@@ -403,17 +403,20 @@ class _Builder {
         final value = resolve(s['value'], item);
         final fraction = value is num && !value.isNaN ? value.toDouble().clamp(0.0, 1.0) : 0.0;
         final height = (number(s['height']) ?? 6).clamp(2.0, 40.0);
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(height / 2),
-          child: Container(
-            width: double.infinity,
-            height: height,
-            color: t.color(s['track'], chip),
-            alignment: AlignmentDirectional.centerStart,
-            child: FractionallySizedBox(
-              widthFactor: fraction,
-              heightFactor: 1,
-              child: ColoredBox(color: t.color(s['color'], t.color('accent', Colors.orange))),
+        // Full width where the parent bounds it; a Row child with no width or flex gets 120.
+        return LayoutBuilder(
+          builder: (context, constraints) => ClipRRect(
+            borderRadius: BorderRadius.circular(height / 2),
+            child: Container(
+              width: constraints.hasBoundedWidth ? double.infinity : 120,
+              height: height,
+              color: t.color(s['track'], chip),
+              alignment: AlignmentDirectional.centerStart,
+              child: FractionallySizedBox(
+                widthFactor: fraction,
+                heightFactor: 1,
+                child: ColoredBox(color: t.color(s['color'], t.color('accent', Colors.orange))),
+              ),
             ),
           ),
         );
