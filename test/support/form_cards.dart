@@ -2,12 +2,7 @@ import 'package:zehn_intelligence/src/server/surface/surface.dart';
 
 /// A surface of [components] whose root has the id `root`.
 ZiSurface card(List<Map<String, Object?>> components) => ZiSurface.parse({
-  'createSurface': {
-    'surfaceId': 'test',
-    'catalogId': 'zehn.basic.v1',
-    'root': 'root',
-    'components': components,
-  },
+  'createSurface': {'surfaceId': 'test', 'catalogId': 'zehn.basic.v1', 'root': 'root', 'components': components},
 });
 
 const bookCard = <String, Object?>{
@@ -31,13 +26,7 @@ const bookCard = <String, Object?>{
           {'rule': 'required'},
         ],
       },
-      {
-        'id': 'phone',
-        'component': 'TextField',
-        'field': 'phone',
-        'label': 'Phone',
-        'input': 'phone',
-      },
+      {'id': 'phone', 'component': 'TextField', 'field': 'phone', 'label': 'Phone', 'input': 'phone'},
       {
         'id': 'send',
         'component': 'Button',
