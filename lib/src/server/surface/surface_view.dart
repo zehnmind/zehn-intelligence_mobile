@@ -8,7 +8,7 @@ import 'values.dart';
 const ziAllowedActions = {'open_route', 'ask', 'open_url'};
 
 /// Catalog `zehn.basic.v0`: what this build can draw.
-const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider'};
+const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider', 'Stack', 'Wrap', 'Progress', 'Avatar'};
 
 /// The icons a template can name (`icon`); listed in `catalog/zehn.basic.json`.
 const ziIcons = <String, IconData>{
@@ -372,6 +372,80 @@ class _Builder {
         );
       case 'Divider':
         return Container(height: 1, color: t.color('border', chip));
+      case 'Stack':
+        // A block with a position is laid over the others; the first block is always a plain one,
+        // so the stack always has a size.
+        final pairs = _built(s, item, depth);
+        return Stack(
+          clipBehavior: Clip.none,
+          alignment: _alignment(s['alignment']) ?? AlignmentDirectional.topStart,
+          children: [
+            for (final (i, (spec, w)) in pairs.indexed)
+              if (_alignment(spec?['position']) case final place? when i > 0)
+                Positioned.fill(child: Align(alignment: place, child: w))
+              else
+                w,
+          ],
+        );
+      case 'Wrap':
+        final gap = number(s['gap']) ?? 0;
+        return Wrap(
+          spacing: gap,
+          runSpacing: number(s['runGap']) ?? gap,
+          alignment: switch (s['align']) {
+            'center' => WrapAlignment.center,
+            'end' => WrapAlignment.end,
+            _ => WrapAlignment.start,
+          },
+          children: _children(s, item, depth, flexible: false),
+        );
+      case 'Progress':
+        final value = resolve(s['value'], item);
+        final fraction = value is num && !value.isNaN ? value.toDouble().clamp(0.0, 1.0) : 0.0;
+        final height = (number(s['height']) ?? 6).clamp(2.0, 40.0);
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(height / 2),
+          child: Container(
+            width: double.infinity,
+            height: height,
+            color: t.color(s['track'], chip),
+            alignment: AlignmentDirectional.centerStart,
+            child: FractionallySizedBox(
+              widthFactor: fraction,
+              heightFactor: 1,
+              child: ColoredBox(color: t.color(s['color'], t.color('accent', Colors.orange))),
+            ),
+          ),
+        );
+      case 'Avatar':
+        final size = (number(s['size']) ?? 40).clamp(16.0, 160.0);
+        final src = text(s['src'], item);
+        final initials = Container(
+          alignment: Alignment.center,
+          color: t.color(s['color'], chip),
+          child: Text(
+            text(s['text'], item).trim().characters.take(2).toString().toUpperCase(),
+            style: t.text('body', color: onSurface, size: size * 0.4, weight: 500),
+          ),
+        );
+        return ClipOval(
+          child: SizedBox(
+            width: size,
+            height: size,
+            child: src.startsWith('https://') || src.startsWith('http://')
+                ? ColoredBox(
+                    color: t.color('image_bg', Colors.black12),
+                    child: Image.network(
+                      src,
+                      width: size,
+                      height: size,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => initials,
+                    ),
+                  )
+                : initials,
+          ),
+        );
       default:
         return _error('"$type" is not in catalog ${v.surface.catalogId}');
     }
@@ -385,8 +459,9 @@ class _Builder {
     if (type != 'Box' && !(type == 'Row' && s['scroll'] == true) && padding != EdgeInsets.zero) {
       w = Padding(padding: padding, child: w);
     }
+    // A Progress holds its own height to 2..40.
     if (type != 'Image' && (s['width'] != null || s['height'] != null)) {
-      w = SizedBox(width: number(s['width']), height: number(s['height']), child: w);
+      w = SizedBox(width: number(s['width']), height: type == 'Progress' ? null : number(s['height']), child: w);
     }
     if (!const {'Header', 'InfoRow', 'Button'}.contains(type)) {
       final tap = action(s, item);
@@ -395,7 +470,13 @@ class _Builder {
     return w;
   }
 
-  List<Widget> _children(Map<String, Object?> s, Object? item, int depth, {required bool flexible}) {
+  List<Widget> _children(Map<String, Object?> s, Object? item, int depth, {required bool flexible}) => [
+    for (final (spec, w) in _built(s, item, depth))
+      flexible && spec?['flex'] is num ? Expanded(flex: (spec!['flex'] as num).toInt(), child: w) : w,
+  ];
+
+  /// Each drawn child with its spec; a child that is not shown is left out.
+  List<(Map<String, Object?>?, Widget)> _built(Map<String, Object?> s, Object? item, int depth) {
     final c = s['children'];
     final pairs = <(Map<String, Object?>?, Widget)>[];
     if (c is List) {
@@ -417,10 +498,7 @@ class _Builder {
         pairs.add((v.surface.components[templateId], w));
       }
     }
-    return [
-      for (final (spec, w) in pairs)
-        flexible && spec?['flex'] is num ? Expanded(flex: (spec!['flex'] as num).toInt(), child: w) : w,
-    ];
+    return pairs;
   }
 
   CrossAxisAlignment _cross(Object? value, CrossAxisAlignment fallback) => switch (value) {

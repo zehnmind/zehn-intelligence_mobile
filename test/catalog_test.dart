@@ -12,9 +12,9 @@ import 'package:zehn_intelligence/src/version.dart';
 
 /// What the file lists but the renderer does not draw yet.
 const _notYet = (
-  blocks: {'Stack', 'Wrap', 'Progress', 'Avatar', 'TextField', 'Checkbox', 'Switch', 'Select', 'DateField'},
+  blocks: {'TextField', 'Checkbox', 'Switch', 'Select', 'DateField'},
   actions: {'submit'},
-  common: {'position'},
+  common: <String>{},
 );
 
 /// `catalog/zehn.basic.json` is what the console's analyzer reads to draft
@@ -100,23 +100,26 @@ void main() {
         'id': 'block',
         'component': name,
         if (name == 'Box') 'child': 'leaf',
-        if (name == 'Column' || name == 'Row') 'children': ['leaf'],
+        if (name == 'Column' || name == 'Row' || name == 'Stack' || name == 'Wrap') 'children': ['leaf'],
       });
-      final surface = ZiSurface.parse({
-        'createSurface': {
-          'root': 'root',
-          'components': [
-            {'id': 'root', 'component': 'Column', 'children': ['block']},
-            spy,
-            {'id': 'leaf', 'component': 'Text', 'text': 'x'},
-          ],
-        },
-      });
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-          body: ZiSurfaceView(surface: surface, data: const {}, theme: const ZiTheme({}), language: 'en', onAction: (_) {}),
-        ),
-      ));
+      // Under a Column the block's flex is read, under a Stack its position.
+      for (final parent in ['Column', 'Stack']) {
+        final surface = ZiSurface.parse({
+          'createSurface': {
+            'root': 'root',
+            'components': [
+              {'id': 'root', 'component': parent, 'children': ['block']},
+              spy,
+              {'id': 'leaf', 'component': 'Text', 'text': 'x'},
+            ],
+          },
+        });
+        await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+            body: ZiSurfaceView(surface: surface, data: const {}, theme: const ZiTheme({}), language: 'en', onAction: (_) {}),
+          ),
+        ));
+      }
       final listed = {...common.keys.toSet().difference(_notYet.common), ...(blocks[name]!['props']! as Map).keys.cast<String>()};
       expect(spy.reads, listed);
     });
