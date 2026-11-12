@@ -20,7 +20,8 @@
 // Ask about the cinema ("kino", "cinema", "кино") for a tool call and a
 // console-made card; about "card"/"karta"/"карта" for a login-only tool;
 // "loyalty" opens an app route; "reserve"/"parking"/"bron" asks to confirm a
-// write. Anything else is echoed.
+// write; "table"/"stol"/"столик" shows a form; a name of "error" is refused.
+// Anything else is echoed.
 
 import 'dart:async';
 import 'dart:convert';
@@ -59,6 +60,9 @@ var _nextTurn = 0;
 /// Confirm cards not answered yet, by action id.
 final _actions = <String, _PendingTurn>{};
 var _nextAction = 0;
+
+/// Forms shown so far, for their ids.
+var _nextForm = 0;
 
 /// A conversation as the history shows it, per install.
 class _Conversation {
@@ -207,6 +211,20 @@ void _keep(String turnId, String name, Map<String, Object?> data) {
         'turn_id': turnId,
         'at': at,
       });
+    case 'form':
+      shown.add({
+        'role': 'assistant',
+        'type': 'form',
+        'call_id': data['call_id'],
+        'form_id': data['form_id'],
+        'component': data['component'],
+        'tool': data['tool'],
+        'surface': data['surface'],
+        'props': data['props'],
+        'status': 'pending',
+        'turn_id': turnId,
+        'at': at,
+      });
     case 'confirm':
       shown.add({
         'role': 'assistant',
@@ -298,6 +316,12 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
   final text = _text(body);
   final shown = _conversations.putIfAbsent(conversation, () => _Conversation(req.headers.value('x-zi-install-id') ?? ''));
   _turnConversation[turnId] = conversation;
+  final answer = body['input'];
+  if (answer is Map && answer['type'] == 'form') {
+    await _answerForm(req, turnId, shown, answer.cast<String, Object?>(), language);
+    return;
+  }
+  _dismissForms(shown);
   final asked = (body['input'] as Map?)?['text'];
   if ((body['input'] as Map?)?['type'] == 'audio') {
     shown.messages.add({'role': 'user', 'type': 'text', 'text': 'kino haqida', 'spoken': true, 'turn_id': turnId});
@@ -310,6 +334,25 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
   final input = body['input'];
   if (input is Map && input['type'] == 'action') {
     await _answerAction(req, turnId, started, input.cast<String, Object?>(), language);
+    return;
+  }
+  if (RegExp('table|stol|столик').hasMatch(text)) {
+    await _sse(req, turnId, [
+      started,
+      ('text.delta', {'text': _w(language, 'Ma’lumotlarni to‘ldiring.', 'Заполните данные.', 'Please fill in the details.')}),
+      (
+        'form',
+        {
+          'call_id': 'c_1',
+          'form_id': 'form_${++_nextForm}',
+          'component': 'book_table',
+          'tool': 'tables.book',
+          'surface': jsonDecode(_bookSurface),
+          'props': {'form': <String, Object?>{}},
+        },
+      ),
+      ('done', {'outcome': 'answered'}),
+    ]);
     return;
   }
   if (RegExp('reserve|parking|bron|брон').hasMatch(text) && _map(_app['tools']).containsKey('parking.reserve')) {
@@ -382,6 +425,59 @@ Future<void> _startTurn(HttpRequest req, Map<String, Object?> body) async {
         'max_result_bytes': 32768,
       },
     ),
+  ]);
+}
+
+/// A new turn leaves the forms still waiting in its conversation unanswered for good.
+void _dismissForms(_Conversation conversation, [Object? except]) {
+  for (final m in conversation.messages) {
+    if (m['type'] == 'form' && m['status'] == 'pending' && m['form_id'] != except) m['status'] = 'dismissed';
+  }
+}
+
+/// The answers to a form card. Errors are the backend's: unknown form, a form already answered, and a
+/// refused value (a `name` of "error" stands in for a server-side check the phone cannot make).
+Future<void> _answerForm(
+  HttpRequest req,
+  String turnId,
+  _Conversation conversation,
+  Map<String, Object?> input,
+  String language,
+) async {
+  final form = conversation.messages.where((m) => m['type'] == 'form' && m['form_id'] == input['form_id']).firstOrNull;
+  if (form == null) {
+    await _json(req, 404, {'code': 'form_not_found', 'message': 'No such form.'});
+    return;
+  }
+  if (form['status'] != 'pending') {
+    await _json(req, 409, {
+      'code': 'form_used',
+      'params': {'status': form['status']},
+      'message': 'This form was already answered.',
+    });
+    return;
+  }
+  final values = _map(input['values']);
+  if (values['name'] == 'error') {
+    await _json(req, 422, {
+      'code': 'form_invalid',
+      'params': {
+        'errors': [
+          {'field': 'name', 'rule': 'length'},
+        ],
+      },
+      'message': 'Some answers are not valid.',
+    });
+    return;
+  }
+  _dismissForms(conversation, input['form_id']);
+  form['status'] = 'submitted';
+  form['props'] = {'form': values};
+  final started = ('turn.started', <String, Object?>{'conversation_id': _turnConversation[turnId], 'conversation_new': false});
+  await _sse(req, turnId, [
+    started,
+    ('text.delta', {'text': _w(language, 'Qabul qilindi: ', 'Получено: ', 'Received: ') + jsonEncode(values)}),
+    ('done', {'outcome': 'answered'}),
   ]);
 }
 
@@ -617,5 +713,7 @@ const _cinemaSurface = r'''{"surfaceId": "cinema_details", "catalogId": "zehn.ba
 // The server's default confirm template (CARDS_FOR_MOBILE.md, section 5).
 /// No framing root `Box`: the SDK draws the card's frame around it and its buttons.
 const _confirmSurface = r'''{"createSurface": {"surfaceId": "zi_confirm", "catalogId": "zehn.basic.v0", "root": "body", "components": [{"id": "body", "component": "Column", "gap": 12, "children": ["title", "rows"]}, {"id": "title", "component": "Text", "style": "title", "text": {"uz": "Tasdiqlaysizmi?", "ru": "Подтвердить?", "en": "Confirm this?"}}, {"id": "rows", "component": "Column", "gap": 8, "children": {"componentId": "row", "path": "/rows"}}, {"id": "row", "component": "Row", "gap": 12, "children": ["label", "value"]}, {"id": "label", "component": "Text", "style": "caption", "color": "muted", "flex": 1, "text": {"path": "label"}}, {"id": "value", "component": "Text", "style": "body", "text": {"path": "value"}}]}}''';
+// A form the SDK draws: a booking with a required name, a number, a date and a comment, then Submit.
+const _bookSurface = r'''{"createSurface": {"surfaceId": "book_table", "catalogId": "zehn.basic.v1", "root": "root", "components": [{"id": "root", "component": "Box", "color": "surface", "radius": "card", "padding": 16, "child": "body"}, {"id": "body", "component": "Column", "gap": 12, "children": ["title", "name", "guests", "date", "comment", "send"]}, {"id": "title", "component": "Header", "title": {"uz": "Stol band qilish", "ru": "Забронировать столик", "en": "Book a table"}}, {"id": "name", "component": "TextField", "field": "name", "label": {"uz": "Ismingiz", "ru": "Ваше имя", "en": "Your name"}, "checks": [{"rule": "required"}]}, {"id": "guests", "component": "TextField", "field": "guests", "input": "number", "value": 2, "label": {"uz": "Mehmonlar soni", "ru": "Количество гостей", "en": "Guests"}, "checks": [{"rule": "range", "min": 1, "max": 12}]}, {"id": "date", "component": "DateField", "field": "date", "min": "today", "label": {"uz": "Sana", "ru": "Дата", "en": "Date"}, "checks": [{"rule": "required"}]}, {"id": "comment", "component": "TextField", "field": "comment", "input": "multiline", "label": {"uz": "Izoh", "ru": "Комментарий", "en": "Comment"}}, {"id": "send", "component": "Button", "label": {"uz": "Band qilish", "ru": "Забронировать", "en": "Book"}, "action": {"name": "submit"}}]}}''';
 const _theme = r'''{"font": "CeraPro", "colors": {"surface": "#FF19212F", "on_surface": "#E6FFFFFF", "muted": "#99FFFFFF", "chip": "#0DFFFFFF", "image_bg": "#08FFFFFF", "border": "#0DFFFFFF", "accent": "#FFBE7C6C", "on_accent": "#FFFFFFFF"}, "text": {"display": {"size": 30, "weight": 500, "height": 1.15}, "title": {"size": 17, "weight": 500, "height": 1.25}, "body": {"size": 15, "weight": 400, "height": 1.4}, "caption": {"size": 13, "weight": 400, "height": 1.3}}, "radius": {"card": 24, "image": 20, "chip": 100, "button": 16}}''';
 const _data = r'''{"id": 1, "name": "Cinematica", "floor": "4", "category_name": {"uz": "Kinoteatr", "ru": "Кинотеатр", "en": "Cinema"}, "description": {"uz": "Tashkent City Mall'dagi zamonaviy kinoteatr: 8 ta zal, IMAX va qulay o'rindiqlar.", "ru": "Современный кинотеатр в Tashkent City Mall: 8 залов, IMAX и удобные кресла.", "en": "A modern cinema in Tashkent City Mall: 8 halls, IMAX and comfortable seats."}, "working_hours": {"uz": "Har kuni 10:00 – 02:00", "ru": "Ежедневно 10:00 – 02:00", "en": "Every day 10:00 – 02:00"}, "phone": "+998 71 000 00 00", "website": "cinematica.example", "photo_url": "https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?auto=format&fit=crop&w=800&q=80", "movies": [{"title": "Michael", "genre": "Drama, Biography", "rating": "13+", "image": "https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=500&q=80"}, {"title": "F1: The Movie", "genre": "Action, Drama, Sport", "rating": "13+", "image": "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=500&q=80"}, {"title": "The Fantastic Four: First Steps", "genre": "Action", "rating": "13+", "image": "https://images.unsplash.com/photo-1536440136628-849c177e76a1?auto=format&fit=crop&w=500&q=80"}]}''';
