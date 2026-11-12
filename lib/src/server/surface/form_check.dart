@@ -110,20 +110,24 @@ List<String> _optionValues(Map<String, Object?> spec) {
 }
 
 final _numberText = RegExp(r'^-?\d+([.,]\d+)?$');
+final _digit = RegExp(r'\d');
+
+// Fifteen digits is what Dart, JavaScript and JSON all carry exactly; a longer number would be sent changed.
+const _maxNumberDigits = 15;
 final _emailText = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
 final _phoneStrip = RegExp(r'[\s+\-()]');
 final _phoneDigits = RegExp(r'^\d{7,15}$');
 final _dayText = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$');
 
-/// What a number field holds: a finite number, or number text, as an integer when it has no fraction.
-/// Null for anything else, including text too long to be finite.
+/// What a number field holds: a finite number, or number text of at most 15 digits, as an integer when it has
+/// no fraction. Null for anything else. A number the field already holds (a default or a prefill) is kept as it is.
 num? _numberOf(Object? raw) {
   num? n;
   if (raw is num) {
     n = raw;
   } else if (raw is String) {
     final text = raw.trim();
-    if (!_numberText.hasMatch(text)) return null;
+    if (!_numberText.hasMatch(text) || _digit.allMatches(text).length > _maxNumberDigits) return null;
     n = int.tryParse(text) ?? double.parse(text.replaceFirst(',', '.'));
   }
   if (n == null || !n.isFinite) return null;

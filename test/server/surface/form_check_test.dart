@@ -39,16 +39,24 @@ void main() {
     expect(check(guests, 13)?.word, check(guests, '13')?.word);
   });
 
-  test('a number text too long to be finite fails as a number; a long integer is fine', () {
+  test('a number text too long to be finite fails as a number', () {
     final huge = '9' * 400;
     expect(check({'input': 'number'}, huge)?.rule, 'number');
     expect(ziFieldValue({'component': 'TextField', 'input': 'number'}, huge), huge);
-    final long = '1' * 30;
-    expect(check({'input': 'number'}, long), isNull);
-    expect(
-      ziFieldValue({'component': 'TextField', 'input': 'number'}, long),
-      isA<num>().having((n) => n.isFinite, 'finite', true),
-    );
+  });
+
+  test('a number has at most 15 digits, the sign and the decimal mark aside; it is sent exactly', () {
+    final number = {'component': 'TextField', 'input': 'number'};
+    expect(check({'input': 'number'}, '123456789012345'), isNull);
+    expect(ziFieldValue(number, '123456789012345'), 123456789012345);
+    expect(check({'input': 'number'}, '1234567890.12345'), isNull);
+    expect(ziFieldValue(number, '1234567890.12345'), 1234567890.12345);
+    expect('${ziFieldValue(number, '1234567890.12345')}', '1234567890.12345');
+    expect(check({'input': 'number'}, '-123456789012345'), isNull);
+    expect(ziFieldValue(number, '-123456789012345'), -123456789012345);
+    expect(check({'input': 'number'}, '1234567890123456')?.rule, 'number');
+    expect(check({'input': 'number'}, '1234567890.123456789')?.rule, 'number');
+    expect(check({'input': 'number'}, '20208000900123456789')?.rule, 'number');
   });
 
   test('a date field is read without looking at input', () {

@@ -513,6 +513,9 @@ The five blocks:
 | `Select` | `options` (1 to 50 of `{"value": string of 1 to 64 characters, "label": value}`, values unique), `multiple` (bool), `look` (`dropdown` default, `list`, `chips`), `placeholder` | One option, or several when `multiple`. `dropdown` opens the options in a bottom sheet; `list` is radio rows (checkbox rows when `multiple`); `chips` is chips. `value` is one option's `value`, or a list of them when `multiple`. |
 | `DateField` | `min`, `max` (`YYYY-MM-DD` or `"today"`) | A date picked from a calendar. `value` is `YYYY-MM-DD` or `"today"`. |
 
+A `TextField` with `input: number` is for a quantity of at most 15 digits. Leading zeros are not
+kept, so account numbers, card numbers and codes belong in a `text` field.
+
 A field is drawn with a `chip` fill, corners of `radius.button`, its text in `body` and `on_surface`,
 its label and hint in `caption` and `muted`, an `accent` outline when focused, and its error in the
 `error` colour (section 9). It is at least 48 px tall. A multiple `Select` keeps its options' order
@@ -552,7 +555,7 @@ answers arrive, and in the console's preview:
 
 | Automatic check | Fails when |
 |---|---|
-| `number` | `input: number` and the text is not `-?digits` with an optional `.` or `,` fraction, or its value is not finite (several hundred digits). Sent as a JSON number (an integer when it has no fraction), a `,` read as `.`. |
+| `number` | `input: number` and the text is not `-?digits` with an optional `.` or `,` fraction, or it has more than 15 digits (the sign and the decimal mark aside). Sent as a JSON number (an integer when it has no fraction), a `,` read as `.`. Fifteen digits is what Dart, JavaScript and JSON all carry exactly; a longer number would reach the backend changed. |
 | `email` | `input: email` and the text is not like `name@host.tld` (no spaces, one `@`, a dot after it). |
 | `phone` | `input: phone` and, with every whitespace, `+`, `-`, `(` and `)` removed, it is not 7 to 15 digits. The value is sent as typed. |
 | `date` | Not a real date, or outside `min` and `max` (inclusive). `"today"` is the phone's local date. |
