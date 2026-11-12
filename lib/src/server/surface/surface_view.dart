@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'fields/select_field.dart';
 import 'fields/text_field.dart';
 import 'fields/toggle_field.dart';
 import 'form_check.dart';
@@ -13,7 +14,7 @@ import 'values.dart';
 const ziAllowedActions = {'open_route', 'ask', 'open_url', 'submit'};
 
 /// Catalog `zehn.basic.v0`: what this build can draw.
-const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider', 'Stack', 'Wrap', 'Progress', 'Avatar', 'TextField', 'Checkbox', 'Switch'};
+const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider', 'Stack', 'Wrap', 'Progress', 'Avatar', 'TextField', 'Checkbox', 'Switch', 'Select'};
 
 /// Whether this build has a widget for every block of [surface]'s template.
 bool ziDraws(ZiSurface surface) => surface.components.values.every((spec) => ziCatalog.contains(spec['component']));
@@ -442,6 +443,15 @@ class _Builder {
       case 'Switch':
         final form = v.form;
         return ZiToggleFieldBlock(
+          key: form == null ? null : ValueKey('zi-field-${form.formId}-${s['id']}'),
+          spec: s,
+          values: values,
+          theme: t,
+          form: form,
+        );
+      case 'Select':
+        final form = v.form;
+        return ZiSelectFieldBlock(
           key: form == null ? null : ValueKey('zi-field-${form.formId}-${s['id']}'),
           spec: s,
           values: values,

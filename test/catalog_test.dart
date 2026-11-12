@@ -13,7 +13,7 @@ import 'package:zehn_intelligence/src/version.dart';
 
 /// What the file lists but the renderer does not draw yet.
 const _notYet = (
-  blocks: {'Select', 'DateField'},
+  blocks: {'DateField'},
   actions: <String>{},
   common: <String>{},
 );
@@ -105,6 +105,7 @@ void main() {
       });
       final isField = blocks[name]!['group'] == 'field';
       if (isField) spy.addAll({'field': 'f', 'label': 'L'});
+      if (name == 'Select') spy['options'] = [{'value': 'a', 'label': 'A'}];
       // Under a Column the block's flex is read, under a Stack its position.
       for (final parent in ['Column', 'Stack']) {
         final surface = ZiSurface.parse({
