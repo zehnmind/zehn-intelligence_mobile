@@ -1,14 +1,19 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'form_draft.dart';
+import 'form_words.dart';
 import 'surface.dart';
 import 'values.dart';
 
 /// The only things a component's tap may ask for.
-const ziAllowedActions = {'open_route', 'ask', 'open_url'};
+const ziAllowedActions = {'open_route', 'ask', 'open_url', 'submit'};
 
 /// Catalog `zehn.basic.v0`: what this build can draw.
 const ziCatalog = {'Box', 'Column', 'Row', 'Image', 'Text', 'Icon', 'Chip', 'Header', 'InfoRow', 'Button', 'Divider', 'Stack', 'Wrap', 'Progress', 'Avatar'};
+
+/// Whether this build has a widget for every block of [surface]'s template.
+bool ziDraws(ZiSurface surface) => surface.components.values.every((spec) => ziCatalog.contains(spec['component']));
 
 /// The icons a template can name (`icon`); listed in `catalog/zehn.basic.json`.
 const ziIcons = <String, IconData>{
@@ -59,6 +64,7 @@ class ZiSurfaceView extends StatelessWidget {
     required this.theme,
     required this.language,
     required this.onAction,
+    this.form,
   });
 
   final ZiSurface surface;
@@ -67,19 +73,33 @@ class ZiSurfaceView extends StatelessWidget {
   final String language;
   final void Function(ZiSurfaceAction action) onAction;
 
+  /// Set when the card is a form: blocks read what is typed from `/form`, and Send asks the form.
+  final ZiFormScope? form;
+
   @override
-  Widget build(BuildContext context) => _Builder(this).build(surface.root, null, 0) ?? const SizedBox.shrink();
+  Widget build(BuildContext context) {
+    final form = this.form;
+    if (form == null) return _Builder(this, data).build(surface.root, null, 0) ?? const SizedBox.shrink();
+    return ListenableBuilder(
+      listenable: form.draft,
+      builder: (context, _) {
+        final base = data is Map<String, Object?> ? data as Map<String, Object?> : const <String, Object?>{};
+        return _Builder(this, {...base, 'form': form.draft.values}).build(surface.root, null, 0) ??
+            const SizedBox.shrink();
+      },
+    );
+  }
 }
 
 class _Builder {
-  _Builder(this.v);
+  _Builder(this.v, Object? data) : values = ZiValues(data, v.language);
 
   final ZiSurfaceView v;
   ZiTheme get t => v.theme;
 
   // ---- values --------------------------------------------------------------
 
-  late final ZiValues values = ZiValues(v.data, v.language);
+  final ZiValues values;
 
   Object? resolve(Object? value, Object? item) => values.resolve(value, item);
 
@@ -185,6 +205,10 @@ class _Builder {
         if (rawArgs is Map)
           for (final e in rawArgs.entries) '${e.key}': resolve(e.value, item),
       };
+      if (name == 'submit') {
+        v.form?.onSubmit();
+        return;
+      }
       v.onAction(ZiSurfaceAction(name, args));
     };
   }
@@ -345,31 +369,7 @@ class _Builder {
           ),
         );
       case 'Button':
-        final secondary = s['variant'] == 'secondary';
-        final fg = secondary ? onSurface : t.color('on_accent', Colors.white);
-        final icon = glyph(s['icon'], 20, fg.withValues(alpha: 0.75));
-        return Material(
-          color: secondary ? chip : t.color('accent', Colors.orange),
-          borderRadius: BorderRadius.circular(t.radius('button', 16)),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: action(s, item),
-            child: SizedBox(
-              height: 50,
-              child: Row(mainAxisAlignment: MainAxisAlignment.center, spacing: 8, children: [
-                ?icon,
-                Flexible(
-                  child: Text(
-                    text(s['label'], item),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: t.text('title', color: fg),
-                  ),
-                ),
-              ]),
-            ),
-          ),
-        );
+        return _button(s, item);
       case 'Divider':
         return Container(height: 1, color: t.color('border', chip));
       case 'Stack':
@@ -452,6 +452,68 @@ class _Builder {
       default:
         return _error('"$type" is not in catalog ${v.surface.catalogId}');
     }
+  }
+
+  Widget _button(Map<String, Object?> s, Object? item) {
+    final submit = s['action'] is Map && (s['action'] as Map)['name'] == 'submit';
+    final form = v.form;
+    final muted = t.color('muted', Colors.white70);
+    if (submit && form == null) return const SizedBox.shrink();
+    if (submit && form!.readOnly) {
+      final word = form.status == ZiFormStatus.submitted ? 'sent' : 'not_answered';
+      return Text(
+        ziFormWord(word, v.language),
+        key: const ValueKey('zi-form-status'),
+        style: t.text('caption', color: muted),
+      );
+    }
+    final sending = submit && form!.status == ZiFormStatus.sending;
+    final busy = submit && form!.busy;
+    final secondary = s['variant'] == 'secondary';
+    final fg = secondary ? t.color('on_surface', Colors.white) : t.color('on_accent', Colors.white);
+    final fill = secondary ? t.color('chip', Colors.white10) : t.color('accent', Colors.orange);
+    final tap = sending || busy ? null : action(s, item);
+    final icon = glyph(s['icon'], 20, fg.withValues(alpha: 0.75));
+    final button = Semantics(
+      button: true,
+      enabled: tap != null,
+      child: Material(
+        key: submit ? const ValueKey('zi-form-send') : null,
+        color: busy ? fill.withValues(alpha: 0.4) : fill,
+        borderRadius: BorderRadius.circular(t.radius('button', 16)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: tap,
+          child: SizedBox(
+            height: 50,
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, spacing: 8, children: [
+              if (sending)
+                SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: fg))
+              else ...[
+                ?icon,
+                Flexible(
+                  child: Text(
+                    text(s['label'], item),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.text('title', color: fg),
+                  ),
+                ),
+              ],
+            ]),
+          ),
+        ),
+      ),
+    );
+    if (!submit || !form!.draft.notSent || sending) return button;
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, spacing: 6, children: [
+      button,
+      Text(
+        ziFormWord('not_sent', v.language),
+        key: const ValueKey('zi-form-not-sent'),
+        style: t.text('caption', color: t.color('error', const Color(0xFFD64545))),
+      ),
+    ]);
   }
 
   /// Padding, size and tap for any component; Header, InfoRow and Button handle their own tap.
