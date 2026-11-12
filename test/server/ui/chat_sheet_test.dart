@@ -804,6 +804,41 @@ void main() {
       }
     });
 
+    testWidgets('back to a new chat, then the conversation from the history, shows what was typed into its form', (tester) async {
+      final history = FakeHistory()
+        ..saved = [summary('c1', title: 'Table for two')]
+        ..transcripts['c1'] = const [
+          ZiUserItem('book a table'),
+          ZiFormItem(formId: 'f1', callId: 'c3', component: 'book_table', tool: 'bookings.create', surface: bookCard, data: {'form': {}}),
+        ];
+      turns.script([started, book(), done]);
+      await open(tester, history: history);
+      await type(tester, 'book a table');
+      await tester.enterText(nameBox(), 'Vali');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('zi-back')));
+      await tester.pumpAndSettle();
+      expect(find.text('How can I help you?'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('zi-history')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Table for two'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<EditableText>(nameBox()).controller.text, 'Vali');
+    });
+
+    testWidgets('no follow-up chips while a form waits for the person; they come back once it is answered', (tester) async {
+      turns.script([started, book(prefill: {'name': 'Ali'}), const SuggestionsEvent(items: ['Tell me more'], turnId: 't1'), done]);
+      await open(tester);
+      await type(tester, 'book a table');
+      expect(cubit.state.suggestions, ['Tell me more']);
+      expect(find.text('Tell me more'), findsNothing);
+      turns.script([started, const SuggestionsEvent(items: ['Tell me more'], turnId: 't2'), done]);
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pumpAndSettle();
+      expect(find.text('Sent'), findsOneWidget);
+      expect(find.text('Tell me more'), findsOneWidget);
+    });
+
     testWidgets('a form with a block this build cannot draw shows the update line and no fields', (tester) async {
       turns.script([started, book(surface: const {'createSurface': {'root': 'root', 'components': [
         {'id': 'root', 'component': 'Column', 'children': ['name', 'stars']},

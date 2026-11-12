@@ -70,6 +70,10 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   /// widgets, so it outlives a card scrolled away and the chat closed and opened again.
   final Map<String, ZiFormDraft> _forms = {};
 
+  /// The drafts of the forms still waiting when a new chat was started, by form id, for when their
+  /// conversation is opened again from the history. A plain [reset] (sign-out) and [close] drop them.
+  final Map<String, ZiFormDraft> _setAside = {};
+
   /// The forms the running turn showed: locked if that turn fails.
   final Set<String> _shownThisTurn = {};
 
@@ -343,8 +347,22 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   void showError(String code, {bool retryable = false}) =>
       _emit(state.copyWith(items: [...state.items, ZiErrorItem(code, retryable: retryable)]));
 
-  /// Forgets the conversation (sign-out, "new chat").
-  void reset() {
+  /// Forgets the conversation (sign-out, "new chat"). With [keepDrafts] ("new chat"), what was typed
+  /// into the forms still waiting is set aside for when that conversation is opened again from the
+  /// history; without it (sign-out), nothing typed is kept.
+  void reset({bool keepDrafts = false}) {
+    if (keepDrafts) {
+      for (final item in state.items) {
+        if (item is ZiFormItem && item.status == ZiFormStatus.pending) {
+          if (_forms.remove(item.formId) case final draft?) {
+            _setAside.remove(item.formId)?.dispose();
+            _setAside[item.formId] = draft;
+          }
+        }
+      }
+    } else {
+      _dropSetAside();
+    }
     _forget();
     _emit(const ZiChatState());
   }
@@ -353,8 +371,9 @@ class ZiChatCubit extends Cubit<ZiChatState> {
   /// that can go on takes the next question; one that can't is read-only,
   /// and its unanswered confirm cards and forms are past answering. Each form
   /// gets a draft holding what it was sent or offered with; one whose
-  /// template does not parse is left out. Picking the open conversation again
-  /// keeps what was typed into its forms that are still waiting.
+  /// template does not parse is left out. Picking the open conversation again,
+  /// or one left with "new chat", keeps what was typed into its forms that are
+  /// still waiting.
   void resume(ZiConversation conversation) {
     final kept = <String, ZiFormDraft>{};
     if (conversation.id == state.conversationId) {
@@ -369,7 +388,12 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     final items = <ZiChatItem>[];
     for (final item in conversation.items) {
       if (item is ZiFormItem) {
-        final draft = kept.remove(item.formId) ?? _draftOf(item.surface, item.data);
+        // A draft set aside is used only for a form still waiting; one the server holds an answer for is dropped.
+        final aside = _setAside.remove(item.formId);
+        final waiting = item.status == ZiFormStatus.pending;
+        final held = waiting ? kept.remove(item.formId) ?? aside : null;
+        if (!identical(held, aside)) aside?.dispose();
+        final draft = held ?? _draftOf(item.surface, item.data);
         if (draft == null) continue;
         _forms[item.formId]?.dispose();
         _forms[item.formId] = draft;
@@ -405,6 +429,13 @@ class ZiChatCubit extends Cubit<ZiChatState> {
     _sending = null;
   }
 
+  void _dropSetAside() {
+    for (final draft in _setAside.values) {
+      draft.dispose();
+    }
+    _setAside.clear();
+  }
+
   @override
   Future<void> close() async {
     _hangUp();
@@ -413,6 +444,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       timer.cancel();
     }
     _dropForms();
+    _dropSetAside();
     await _opens.close();
     return super.close();
   }

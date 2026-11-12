@@ -316,8 +316,9 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     unawaited(widget.cubit.sendText(text));
   }
 
+  /// What is typed into a waiting form is set aside, for when its conversation is opened again from the history.
   void _newChat() {
-    widget.cubit.reset();
+    widget.cubit.reset(keepDrafts: true);
     _startedAt = null;
     setState(() => _typing = false);
     unawaited(widget.cubit.loadStarterSuggestions());
@@ -647,7 +648,8 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       _ => false,
     };
     final thinking = state.busy && last is! ZiAssistantItem && !waitingForUser;
-    final followUps = !state.busy && state.items.isNotEmpty && state.suggestions.isNotEmpty;
+    // Not beside a card that waits: a stray tap would send a turn and lock a form whose values were never sent.
+    final followUps = !state.busy && !waitingForUser && state.items.isNotEmpty && state.suggestions.isNotEmpty;
     // Each turn's last part carries the speaker, when its speech is held.
     final lastPart = {
       for (final item in state.items)

@@ -767,5 +767,52 @@ void main() {
       expect(cubit.formDraft('f1')!.raw['name'], 'Sami');
       expect(() => typed.addListener(() {}), throwsFlutterError); // disposed
     });
+
+    test('a new chat sets a waiting form\'s draft aside; opening its conversation again brings back what was typed', () async {
+      await shown();
+      final typed = cubit.formDraft('f1')!..set('name', 'Vali');
+      cubit.reset(keepDrafts: true);
+      expect(cubit.state.items, isEmpty);
+      expect(cubit.formDraft('f1'), isNull);
+      cubit.resume(history('c1', ZiFormStatus.pending));
+      expect(cubit.formDraft('f1'), same(typed));
+      expect(cubit.formDraft('f1')!.raw['name'], 'Vali');
+    });
+    test('a draft set aside again under the same form id takes the place of the first, which is disposed', () async {
+      await shown();
+      final first = cubit.formDraft('f1')!;
+      cubit.reset(keepDrafts: true);
+      await shown();
+      final second = cubit.formDraft('f1')!..set('name', 'Vali');
+      cubit.reset(keepDrafts: true);
+      expect(() => first.addListener(() {}), throwsFlutterError); // disposed
+      cubit.resume(history('c1', ZiFormStatus.pending));
+      expect(cubit.formDraft('f1'), same(second));
+    });
+    test('a plain reset after a new chat disposes the draft set aside (sign-out keeps nothing typed)', () async {
+      await shown();
+      final typed = cubit.formDraft('f1')!..set('name', 'Vali');
+      cubit.reset(keepDrafts: true);
+      cubit.reset();
+      expect(() => typed.addListener(() {}), throwsFlutterError); // disposed
+      cubit.resume(history('c1', ZiFormStatus.pending));
+      expect(cubit.formDraft('f1')!.raw['name'], 'Sami');
+    });
+    test('closing the chat disposes a draft set aside', () async {
+      await shown();
+      final typed = cubit.formDraft('f1')!;
+      cubit.reset(keepDrafts: true);
+      await cubit.close();
+      expect(() => typed.addListener(() {}), throwsFlutterError); // disposed
+    });
+    test('a draft set aside whose form comes back sent is disposed and a fresh one takes its place', () async {
+      await shown();
+      final typed = cubit.formDraft('f1')!..set('name', 'Vali');
+      cubit.reset(keepDrafts: true);
+      cubit.resume(history('c1', ZiFormStatus.submitted));
+      expect(() => typed.addListener(() {}), throwsFlutterError); // disposed
+      expect(cubit.formDraft('f1'), isNot(same(typed)));
+      expect(cubit.formDraft('f1')!.raw['name'], 'Sami');
+    });
   });
 }
