@@ -8,7 +8,7 @@ import 'field_frame.dart';
 
 /// One or several of a fixed list of options, drawn as a dropdown (a list in a bottom sheet), as rows in the
 /// card, or as chips.
-class ZiSelectFieldBlock extends StatelessWidget {
+class ZiSelectFieldBlock extends StatefulWidget {
   const ZiSelectFieldBlock({super.key, required this.spec, required this.values, required this.theme, this.form});
 
   final Map<String, Object?> spec;
@@ -17,8 +17,42 @@ class ZiSelectFieldBlock extends StatelessWidget {
   final ZiFormScope? form;
 
   @override
+  State<ZiSelectFieldBlock> createState() => _ZiSelectFieldBlockState();
+}
+
+class _ZiSelectFieldBlockState extends State<ZiSelectFieldBlock> {
+  /// The open dropdown sheet's own context; null when no sheet is open.
+  BuildContext? _sheet;
+
+  Map<String, Object?> get spec => widget.spec;
+  ZiValues get values => widget.values;
+  ZiTheme get theme => widget.theme;
+
+  @override
+  void didUpdateWidget(ZiSelectFieldBlock old) {
+    super.didUpdateWidget(old);
+    if (widget.form?.status != ZiFormStatus.pending) _closeSheet();
+  }
+
+  @override
+  void dispose() {
+    _closeSheet();
+    super.dispose();
+  }
+
+  /// Closes the sheet after this frame: the tree cannot be changed while it is being built or taken apart.
+  void _closeSheet() {
+    final sheet = _sheet;
+    if (sheet == null) return;
+    _sheet = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (sheet.mounted) Navigator.of(sheet).pop();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final form = this.form;
+    final form = widget.form;
     final t = theme;
     final field = spec['field'] as String;
     final multiple = spec['multiple'] == true;
@@ -60,7 +94,7 @@ class ZiSelectFieldBlock extends StatelessWidget {
       draft.touch(field);
     }
 
-    Widget rows() {
+    Widget rows(BuildContext sheet) {
       final now = picked(draft.raw[field]);
       return Column(
         mainAxisSize: MainAxisSize.min,
@@ -74,8 +108,10 @@ class ZiSelectFieldBlock extends StatelessWidget {
               ValueKey('zi-option-${o.value}'),
               open
                   ? () {
+                      // The status now, not the one the sheet was opened with.
+                      if (widget.form?.status != ZiFormStatus.pending) return;
                       toggle(o.value);
-                      if (!multiple && look != 'list') Navigator.of(context).pop();
+                      if (!multiple && look != 'list') Navigator.of(sheet).pop();
                     }
                   : null,
               onSurface,
@@ -87,7 +123,7 @@ class ZiSelectFieldBlock extends StatelessWidget {
 
     final Widget control;
     if (look == 'list') {
-      control = ListenableBuilder(listenable: draft, builder: (_, _) => rows());
+      control = ListenableBuilder(listenable: draft, builder: (c, _) => rows(c));
     } else if (look == 'chips') {
       control = ListenableBuilder(
         listenable: draft,
@@ -119,16 +155,21 @@ class ZiSelectFieldBlock extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: open
-              ? () => showModalBottomSheet<void>(
-                  context: context,
-                  backgroundColor: t.color('surface', Colors.black),
-                  isScrollControlled: true,
-                  builder: (_) => SafeArea(
-                    child: SingleChildScrollView(
-                      child: ListenableBuilder(listenable: draft, builder: (_, _) => rows()),
-                    ),
-                  ),
-                )
+              ? () {
+                  showModalBottomSheet<void>(
+                    context: context,
+                    backgroundColor: t.color('surface', Colors.black),
+                    isScrollControlled: true,
+                    builder: (sheet) {
+                      _sheet = sheet;
+                      return SafeArea(
+                        child: SingleChildScrollView(
+                          child: ListenableBuilder(listenable: draft, builder: (c, _) => rows(c)),
+                        ),
+                      );
+                    },
+                  ).whenComplete(() => _sheet = null);
+                }
               : null,
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 48),

@@ -104,4 +104,45 @@ void main() {
     await pumpForm(tester, pick({'look': 'chips', 'multiple': true}), draft: p.draft, status: ZiFormStatus.submitted);
     expect(find.text('Tashkent, Samarkand'), findsOneWidget);
   });
+
+  testWidgets('a single dropdown: a tap on the picked option clears it and closes the sheet', (tester) async {
+    final p = await pumpForm(tester, pick(const {}), prefill: {'city': 'bukhara'});
+    await tester.tap(find.text('Bukhara'));
+    await tester.pumpAndSettle();
+    await tester.tap(option('bukhara'));
+    await tester.pumpAndSettle();
+    expect(p.draft.raw.containsKey('city'), isFalse);
+    expect(option('bukhara'), findsNothing);
+  });
+
+  testWidgets('the form is locked while the dropdown sheet is open: the sheet closes and the draft stays', (
+    tester,
+  ) async {
+    final p = await pumpForm(
+      tester,
+      pick({'multiple': true}),
+      prefill: {
+        'city': ['tashkent'],
+      },
+    );
+    await tester.tap(find.text('Tashkent'));
+    await tester.pumpAndSettle();
+    expect(option('bukhara'), findsOneWidget);
+    await pumpForm(tester, pick({'multiple': true}), draft: p.draft, status: ZiFormStatus.dismissed);
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(option('bukhara'), findsNothing);
+    expect(p.draft.raw['city'], ['tashkent']);
+  });
+
+  testWidgets('the card goes while the dropdown sheet is open: the sheet closes, nothing throws', (tester) async {
+    await pumpForm(tester, pick(const {}));
+    await tester.tap(find.text('Choose'));
+    await tester.pumpAndSettle();
+    expect(option('bukhara'), findsOneWidget);
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox())));
+    await tester.pumpAndSettle();
+    expect(option('bukhara'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
