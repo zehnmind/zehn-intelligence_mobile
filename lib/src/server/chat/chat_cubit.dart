@@ -338,6 +338,8 @@ class ZiChatCubit extends Cubit<ZiChatState> {
             _mount(event);
           case ConfirmEvent():
             _showConfirm(event);
+          case FormEvent():
+            break;
           case AudioClip():
             _speak(event);
           case SuggestionsEvent():

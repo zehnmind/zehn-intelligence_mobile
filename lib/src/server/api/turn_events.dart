@@ -21,6 +21,7 @@ sealed class TurnEvent {
       'client_api_request',
       'mount_component',
       'confirm',
+      'form',
       'audio',
       'suggestions',
       'turn.paused',
@@ -80,6 +81,16 @@ sealed class TurnEvent {
         props: d.optMap('props') ?? const {},
         confirmLabel: d.optString('confirm_label'),
         expiresIn: Duration(seconds: d.optInt('expires_in') ?? 600),
+        turnId: turnId,
+        seq: seq,
+      ),
+      'form' => FormEvent(
+        callId: d.optString('call_id') ?? '',
+        formId: d.string('form_id'),
+        component: d.optString('component') ?? '',
+        tool: d.optString('tool') ?? '',
+        surface: d.requiredMap('surface'),
+        props: d.optMap('props') ?? const {},
         turnId: turnId,
         seq: seq,
       ),
@@ -215,6 +226,32 @@ final class ConfirmEvent extends TurnEvent {
   final Duration expiresIn;
 }
 
+/// A card with fields for the user to fill. What they send is a new turn
+/// ([TurnInput.form]).
+final class FormEvent extends TurnEvent {
+  const FormEvent({
+    required this.callId,
+    required this.formId,
+    required this.component,
+    required this.tool,
+    required this.surface,
+    required this.props,
+    super.turnId,
+    super.seq,
+  });
+
+  final String callId;
+  final String formId;
+  final String component;
+  final String tool;
+
+  /// The card's template, drawn with [props].
+  final Map<String, Object?> surface;
+
+  /// `{"form": {…prefill…}}`.
+  final Map<String, Object?> props;
+}
+
 final class AudioClip extends TurnEvent {
   const AudioClip({required this.format, required this.text, required this.data, super.turnId, super.seq});
 
@@ -300,6 +337,8 @@ class _Body {
     if (v == null) return null;
     return v is Map ? v.cast<String, Object?>() : _broken(field);
   }
+
+  Map<String, Object?> requiredMap(String field) => optMap(field) ?? _broken(field);
 
   List<String> stringList(String field) {
     final v = map[field];

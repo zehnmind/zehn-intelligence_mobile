@@ -1,5 +1,6 @@
 import '../api/api_client.dart';
 import '../auth/token_source.dart';
+import '../surface/form_draft.dart';
 import 'chat_state.dart';
 
 /// One of the user's conversations in the history list (`GET /v1/conversations`).
@@ -86,7 +87,7 @@ class ZiConversation {
   DateTime get createdAt => summary.createdAt;
 
   /// The user's text, the assistant's text, an `inline` card, or a confirm
-  /// card with what became of it. A `sheet` or `route` was opened, not shown
+  /// or form card with what became of it. A `sheet` or `route` was opened, not shown
   /// in the chat, so it is left out (and never opened again).
   static ZiChatItem? _item(Map<dynamic, dynamic> m, String id) {
     final text = m['text'] is String ? (m['text'] as String).trim() : '';
@@ -112,6 +113,24 @@ class ZiConversation {
           data: _map(m['props']) ?? const {},
           label: m['confirm_label'] is String ? m['confirm_label'] as String : null,
           status: ZiConfirmStatus.values.asNameMap()[m['status']] ?? ZiConfirmStatus.pending,
+        );
+      case ('assistant', 'form'):
+        final form = m['form_id'];
+        final surface = _map(m['surface']);
+        if (form is! String || surface == null) return null;
+        return ZiFormItem(
+          formId: form,
+          callId: m['call_id'] is String ? m['call_id'] as String : id,
+          component: m['component'] is String ? m['component'] as String : '',
+          tool: m['tool'] is String ? m['tool'] as String : '',
+          surface: surface,
+          data: _map(m['props']) ?? const {},
+          // Only the server's three words count; `sending` is the phone's own, never stored.
+          status: switch (m['status']) {
+            'pending' => ZiFormStatus.pending,
+            'submitted' => ZiFormStatus.submitted,
+            _ => ZiFormStatus.dismissed,
+          },
         );
     }
     return null;

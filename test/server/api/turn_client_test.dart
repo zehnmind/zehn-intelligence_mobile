@@ -76,6 +76,9 @@ void main() {
     final action = TurnInput.action(conversationId: 'c1', actionId: 'a1', confirm: false, language: 'uz');
     expect(action.toJson()['input'], {'type': 'action', 'action_id': 'a1', 'decision': 'cancel'});
     expect(action.isAction, isTrue);
+    final form = TurnInput.form(conversationId: 'c1', formId: 'f1', values: {'name': 'Ali', 'guests': 2}, language: 'uz');
+    expect(form.toJson()['input'], {'type': 'form', 'form_id': 'f1', 'values': {'name': 'Ali', 'guests': 2}});
+    expect((form.toJson()['conversation_id'], form.isForm, form.isAction), ('c1', true, false));
   });
 
   test('streams events of one leg and ends on turn.paused', () async {

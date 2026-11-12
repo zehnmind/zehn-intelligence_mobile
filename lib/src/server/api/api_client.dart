@@ -31,7 +31,7 @@ class ZiApiException implements Exception {
     this.retryAfter,
   });
 
-  /// Maps an error answer. Any 422 is `invalid_request`; a body that is not
+  /// Maps an error answer. A 422 is `invalid_request`, except `form_invalid`, which keeps its `params`; a body that is not
   /// JSON (a proxy page) is `server_unavailable`; an unknown 5xx is retryable.
   /// [retryAfter] is the answer's `Retry-After`, if it had a usable one.
   factory ZiApiException.fromResponse(int status, Object? body, {Duration? retryAfter}) {
@@ -46,7 +46,7 @@ class ZiApiException implements Exception {
     }
     final serverCode = body['code'];
     final code = status == 422
-        ? 'invalid_request'
+        ? (serverCode == 'form_invalid' ? 'form_invalid' : 'invalid_request')
         : serverCode is String && serverCode.isNotEmpty
         ? serverCode
         : status >= 500

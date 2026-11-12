@@ -798,6 +798,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
     ),
     ZiComponentItem() => _component(item),
     ZiConfirmItem() => _confirmCard(item, s, words, busy: busy),
+    ZiFormItem() => const SizedBox.shrink(),
     ZiErrorItem() => Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),

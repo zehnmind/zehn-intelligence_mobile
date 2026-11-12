@@ -77,6 +77,17 @@ void main() {
     expect(e.retryable, isFalse);
   });
 
+  test('a 422 form_invalid keeps its code and the fields that failed', () async {
+    server.on('POST', '/v1/turns', (req, _) => respondJson(req, 422, {
+          'code': 'form_invalid',
+          'message': 'm',
+          'params': {'errors': [{'field': 'phone', 'rule': 'phone'}]},
+        }));
+    final e = await failure(api.postJson('/v1/turns', {}));
+    expect((e.code, e.retryable), ('form_invalid', false));
+    expect(e.params['errors'], [{'field': 'phone', 'rule': 'phone'}]);
+  });
+
   test('unknown 5xx is retryable', () async {
     server.on('GET', '/v1/suggestions', (req, _) => respondJson(req, 503, {'message': 'busy'}));
     final e = await failure(api.getJson('/v1/suggestions'));
