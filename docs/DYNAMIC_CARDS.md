@@ -155,7 +155,7 @@ data: {"turn_id":"7b2e…","seq":8,"call_id":"f_1","form_id":"3c9a…","componen
 | Field | Rule |
 |---|---|
 | `call_id` | Any unique string; history uses it. |
-| `form_id` | A UUID. The phone sends it back with the answers, and the backend answers `form_used` for a second send. |
+| `form_id` | A UUID. The phone sends it back with the answers. A second send is refused: `409 turn_in_progress` while the turn the first send started is still running (that turn can still fail, and the form must then open again), `409 form_used` once it has ended. |
 | `component` | The form card's name. |
 | `tool` | The tool the answers are for. |
 | `surface` | The card's template (sections 6 and 7.2). A form is always `inline`. |
@@ -216,7 +216,13 @@ card, which shows the final arguments.
 A form card is `inline` only, has between 1 and 12 fields and exactly one `submit` button, and its
 fields are never inside a repeated block. A form card has no `items`, `id`, `max_items` or
 `confirm_label`, and a tool has at most one form. The backend refuses a card that breaks these when
-it is saved.
+it is saved, except a second form for one tool: that is refused when the spec is published
+(`card_form_taken`), as a second confirm card for one tool is.
+
+Known gap: when a conversation is opened again from the history, the phone draws a sent form from
+`props.form` and falls back to each field's own `value`, so a field that was sent empty shows the
+template's default (a `"today"` default shows the day the conversation is opened). The backend's
+history holds exactly what was sent; the console's conversation view draws only that.
 
 ---
 
@@ -546,8 +552,9 @@ options' labels joined by `", "`; a date in the `date` format; `—` when empty.
 | `range` (`min`, `max`) | `TextField` with `input: number` | The number is in range. |
 | `items` (`min`, `max`) | `Select` with `multiple` | That many options are picked. |
 
-`min` ≤ `max`, and `length`, `range` and `items` need at least one of them. `message` is optional
-(a value, section 6.2). There are no regular expressions.
+`min` ≤ `max`, and `length`, `range` and `items` need at least one of them. `message` is optional:
+a text, or a `{uz, ru, en}` map of texts, each at most 500 characters. It is not a data path; the
+backend refuses one on save. There are no regular expressions.
 
 **How a value is checked.** The same way on the phone before sending, in the backend when the
 answers arrive, and in the console's preview:
@@ -559,10 +566,15 @@ answers arrive, and in the console's preview:
 3. For a field with a value, the first failure is reported, in this order: the automatic checks, then
    `required`, then `length`, `range` or `items`.
 
+The backend differs from the phone in two places. A text over its `maxLength` is reported as
+`length` before `email` or `phone` (the backend runs no pattern on a text past its limit; the
+phone's input box stops at the limit, so a person never meets this). A `"today"` bound on a
+`DateField` allows one day either side, because the backend cannot know the phone's date.
+
 | Automatic check | Fails when |
 |---|---|
 | `number` | `input: number` and the text is not `-?digits` with an optional `.` or `,` fraction, or it has more than 15 digits (the sign and the decimal mark aside). Sent as a JSON number (an integer when it has no fraction), a `,` read as `.`. Fifteen digits is what Dart, JavaScript and JSON all carry exactly; a longer number would reach the backend changed. |
-| `email` | `input: email` and the text is not like `name@host.tld` (no spaces, one `@`, a dot after it). |
+| `email` | `input: email` and the text is not `name@host.tld`: no whitespace, exactly one `@` with text before it, and a dot after the `@` with text on both sides of the dot (`^[^@\s]+@[^@\s]+\.[^@\s]+$`). |
 | `phone` | `input: phone` and, with every whitespace, `+`, `-`, `(` and `)` removed, it is not 7 to 15 digits. The value is sent as typed. |
 | `date` | Not a real date, or outside `min` and `max` (inclusive). `"today"` is the phone's local date. |
 | `option` | A value that is not one of the `Select`'s options. |
@@ -800,7 +812,7 @@ font, drawn natively.
 | `route` event without `route` (or not starting with `/`), and no app widget | Nothing happens. |
 | Write without a confirmed `action_id` | Not made; the model reads `not_confirmed`. |
 | A block the phone does not know, in a form card | None of the form is drawn: the card says "Update the app to answer this." A form that silently lost a field must not be sendable. |
-| A field in a card that is not a form (a result or confirm card, or `ZiSurfaceView` drawn alone) | The field is read-only: its label and its value as text. A `submit` button draws nothing. |
+| A field in a card that is not a form (a result or confirm card, or `ZiSurfaceView` drawn alone) | The field is read-only: its label and its value as text. A `submit` button draws nothing. Known gap: drawn this way, a `Select` and a `DateField` show a dash even when `/form` has their value (a `TextField`, `Checkbox` and `Switch` show it). A form card in the chat always has a form, so this is seen only when `ZiSurfaceView` is used on its own. |
 
 Nothing in a template can crash the app or run code. A tap can only open an app route, ask a
 question, or open an `https:`, `tel:` or `mailto:` link; images load only over `http(s)`.
@@ -843,7 +855,8 @@ on the next card. Cache templates on the backend, not on the phone.
 
 **How do I add a new block or icon?** That's an SDK change (a new catalog version, such as
 `zehn.basic.v1`). A card that uses a new block is served only to SDKs that have it; an older app
-never gets it, and its assistant answers in text instead.
+never gets it. For a result card, its assistant answers in text instead; for a confirm card, it
+gets the default confirm card; a form is not offered to it at all.
 
 **Do I need to localize data on the server?** No. Send the `{uz, ru, en}` objects as they come from
 the customer's API; the SDK picks the user's language.

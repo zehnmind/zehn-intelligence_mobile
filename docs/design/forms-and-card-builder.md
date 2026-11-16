@@ -178,7 +178,7 @@ New refusals on save and publish (same shape as today's card errors):
 | Code | When |
 |---|---|
 | `form_needs_inline` | The component's kind is not `inline`. |
-| `card_form_taken` | The tool already has a form. |
+| `card_form_taken` | The tool already has a form (on publish only, as `card_confirm_taken`). |
 | `form_needs_field` / `form_too_many_fields` | No field, or more than 12. |
 | `form_needs_submit` | Not exactly one `Button` with `submit`. |
 | `input_needs_form` | A field or `submit` in a result or confirm card. |
@@ -261,7 +261,9 @@ The server, in order:
    these values. `values` is at most 32 KB. A failure is `422 form_invalid` with
    `params.errors: [{"field": "phone", "rule": "phone"}]`, and the form stays `pending`.
 3. Marks it `submitted` for this turn and stores the values. A second submit while that turn
-   runs gets `409 form_used`.
+   runs gets `409 turn_in_progress` naming that turn, not `form_used`: the turn can still fail,
+   and the form must then open again with everything typed in. Once the turn has ended, a
+   second submit gets `409 form_used`.
 4. Starts the turn. The user message holds only the note, which now ends with: the person
    filled in form `{component}` for `{tool}`, their answers as JSON, use them as that tool's
    arguments and ask only for what is still missing.
