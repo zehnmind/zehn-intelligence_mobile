@@ -100,7 +100,7 @@ class ZiConversation {
         final component = m['component'];
         if (component is! String || (m['kind'] ?? 'inline') != 'inline') return null;
         return ZiComponentItem(id, component, ZiComponentKind.inline, _map(m['props']) ?? const {},
-            surface: _map(m['surface']), route: m['route'] is String ? m['route'] as String : null);
+            surface: _map(m['surface']), route: m['route'] is String ? m['route'] as String : null, language: _language(m));
       case ('assistant', 'confirm'):
         final action = m['action_id'];
         final tool = m['tool'];
@@ -113,6 +113,7 @@ class ZiConversation {
           data: _map(m['props']) ?? const {},
           label: m['confirm_label'] is String ? m['confirm_label'] as String : null,
           status: ZiConfirmStatus.values.asNameMap()[m['status']] ?? ZiConfirmStatus.pending,
+          language: _language(m),
         );
       case ('assistant', 'form'):
         final form = m['form_id'];
@@ -131,6 +132,7 @@ class ZiConversation {
             'submitted' => ZiFormStatus.submitted,
             _ => ZiFormStatus.dismissed,
           },
+          language: _language(m),
         );
     }
     return null;
@@ -173,3 +175,10 @@ class ZiHistory {
 DateTime? _date(Object? v) => v is String ? DateTime.tryParse(v) : null;
 
 Map<String, Object?>? _map(Object? v) => v is Map ? v.cast<String, Object?>() : null;
+
+/// A card's `language`, so a reopened chat draws it as it was drawn; null
+/// (the app's language) when an older server sent none.
+String? _language(Map<dynamic, dynamic> m) {
+  final v = m['language'];
+  return v is String && v.isNotEmpty ? v : null;
+}

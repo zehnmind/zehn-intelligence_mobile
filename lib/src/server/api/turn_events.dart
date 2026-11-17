@@ -69,6 +69,7 @@ sealed class TurnEvent {
         props: d.optMap('props') ?? const {},
         surface: d.optMap('surface'),
         route: d.optString('route'),
+        language: d.language(),
         turnId: turnId,
         seq: seq,
       ),
@@ -81,6 +82,7 @@ sealed class TurnEvent {
         props: d.optMap('props') ?? const {},
         confirmLabel: d.optString('confirm_label'),
         expiresIn: Duration(seconds: d.optInt('expires_in') ?? 600),
+        language: d.language(),
         turnId: turnId,
         seq: seq,
       ),
@@ -91,6 +93,7 @@ sealed class TurnEvent {
         tool: d.optString('tool') ?? '',
         surface: d.requiredMap('surface'),
         props: d.optMap('props') ?? const {},
+        language: d.language(),
         turnId: turnId,
         seq: seq,
       ),
@@ -173,6 +176,7 @@ final class MountComponent extends TurnEvent {
     required this.props,
     this.surface,
     this.route,
+    this.language,
     super.turnId,
     super.seq,
   });
@@ -191,6 +195,10 @@ final class MountComponent extends TurnEvent {
   /// The app route to open, for `route`: final, filled and escaped by the
   /// server. Opened as it is.
   final String? route;
+
+  /// The conversation's language, for a card: the SDK's own words, dates,
+  /// numbers and money on it follow it. Null from an older server.
+  final String? language;
 }
 
 /// A data-changing call waiting for the user's tap: nothing reaches the
@@ -206,6 +214,7 @@ final class ConfirmEvent extends TurnEvent {
     required this.props,
     this.confirmLabel,
     required this.expiresIn,
+    this.language,
     super.turnId,
     super.seq,
   });
@@ -224,6 +233,11 @@ final class ConfirmEvent extends TurnEvent {
   /// The Confirm button's word, in the user's language; null uses the SDK's.
   final String? confirmLabel;
   final Duration expiresIn;
+
+  /// The conversation's language: the card's Cancel, Confirm and status
+  /// words, and its dates, numbers and money, follow it. Null from an older
+  /// server.
+  final String? language;
 }
 
 /// A card with fields for the user to fill. What they send is a new turn
@@ -236,6 +250,7 @@ final class FormEvent extends TurnEvent {
     required this.tool,
     required this.surface,
     required this.props,
+    this.language,
     super.turnId,
     super.seq,
   });
@@ -250,6 +265,11 @@ final class FormEvent extends TurnEvent {
 
   /// `{"form": {…prefill…}}`.
   final Map<String, Object?> props;
+
+  /// The conversation's language: the form's own words ("Choose", check
+  /// errors), and its dates, numbers and money, follow it. Null from an
+  /// older server.
+  final String? language;
 }
 
 final class AudioClip extends TurnEvent {
@@ -339,6 +359,12 @@ class _Body {
   }
 
   Map<String, Object?> requiredMap(String field) => optMap(field) ?? _broken(field);
+
+  /// A card's `language`; null when it is missing or empty.
+  String? language() {
+    final v = optString('language');
+    return v == null || v.isEmpty ? null : v;
+  }
 
   List<String> stringList(String field) {
     final v = map[field];

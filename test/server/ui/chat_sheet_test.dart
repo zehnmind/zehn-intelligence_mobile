@@ -235,6 +235,39 @@ void main() {
     expect(find.text('Cinematica'), findsOneWidget);
   });
 
+  testWidgets("a card in the conversation's language: its dates follow it, a language map that still arrives is the app's", (tester) async {
+    const showtime = <String, Object?>{
+      'createSurface': {
+        'surfaceId': 'showtime',
+        'catalogId': 'zehn.basic.v0',
+        'root': 'root',
+        'components': [
+          {'id': 'root', 'component': 'Column', 'children': ['name', 'day']},
+          {'id': 'name', 'component': 'Text', 'text': {'path': '/name'}},
+          {'id': 'day', 'component': 'Text', 'text': '{/day|date}'},
+        ],
+      },
+    };
+    turns.script([
+      started,
+      const MountComponent(
+        callId: 'm1',
+        component: 'showtime',
+        kind: 'inline',
+        props: {'name': {'uz': 'Kino', 'en': 'Cinema'}, 'day': '2026-11-14'},
+        surface: showtime,
+        language: 'ru',
+      ),
+      done,
+    ]);
+    await open(tester);
+    await type(tester, 'kino');
+    expect(find.text('Cinema'), findsOneWidget);
+    expect(find.textContaining('ноября'), findsOneWidget);
+    expect(find.text('Type a message'), findsOneWidget);
+    expect(turns.starts.single.toJson()['language'], 'en');
+  });
+
   testWidgets('a card with no template and no builder draws nothing', (tester) async {
     turns.script([
       started,
@@ -396,7 +429,12 @@ void main() {
     expect(tester.getBottomLeft(find.byType(TextField)).dy, lessThanOrEqualTo(keyboardTop));
   });
 
-  ConfirmEvent reserve({String method = 'POST', Map<String, Object?>? surface = reserveCard, String? label = 'Reserve'}) => ConfirmEvent(
+  ConfirmEvent reserve({
+    String method = 'POST',
+    Map<String, Object?>? surface = reserveCard,
+    String? label = 'Reserve',
+    String? language,
+  }) => ConfirmEvent(
     callId: 'c2',
     actionId: 'a1',
     tool: 'parking.reserve',
@@ -405,6 +443,7 @@ void main() {
     props: const {'zone': 'B1'},
     confirmLabel: label,
     expiresIn: const Duration(minutes: 10),
+    language: language,
     turnId: 't1',
   );
 
@@ -556,6 +595,31 @@ void main() {
     cubit.reset();
   });
 
+  testWidgets("a confirm card's buttons and status are in the card's language; the chat's own words stay in the app's", (tester) async {
+    turns.script([started, reserve(label: null, language: 'ru'), done]);
+    await open(tester);
+    await type(tester, 'бронь');
+    expect(find.text('Reserve zone B1?'), findsOneWidget);
+    expect(find.text('Отмена'), findsOneWidget);
+    expect(find.text('Подтвердить'), findsOneWidget);
+    expect(find.text('Type a message'), findsOneWidget);
+    turns.script([done]);
+    await tester.tap(find.byKey(const ValueKey('zi-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.text('Подтверждено'), findsOneWidget);
+    expect(turns.starts.last.toJson()['language'], 'en');
+  });
+
+  testWidgets("the server's Confirm word is used as it came; without a template the question is in the card's language", (tester) async {
+    turns.script([started, reserve(surface: null, label: 'Забронировать', language: 'ru'), done]);
+    await open(tester);
+    await type(tester, 'бронь');
+    expect(find.text('Подтвердить?'), findsOneWidget);
+    expect(find.text('Забронировать'), findsOneWidget);
+    expect(find.text('Отмена'), findsOneWidget);
+    cubit.reset();
+  });
+
   testWidgets('the sheet fills the height below the status bar', (tester) async {
     tester.view.padding = const FakeViewPadding(top: 62 * 3, bottom: 34 * 3);
     tester.view.viewPadding = const FakeViewPadding(top: 62 * 3, bottom: 34 * 3);
@@ -668,9 +732,9 @@ void main() {
   });
 
   group('forms', () {
-    FormEvent book({Map<String, Object?> prefill = const {}, Map<String, Object?> surface = bookCard}) => FormEvent(
+    FormEvent book({Map<String, Object?> prefill = const {}, Map<String, Object?> surface = bookCard, String? language}) => FormEvent(
         callId: 'c3', formId: 'f1', component: 'book_table', tool: 'bookings.create', surface: surface,
-        props: {'form': prefill}, turnId: 't1');
+        props: {'form': prefill}, language: language, turnId: 't1');
     Finder box(String id) => find.descendant(of: find.byKey(ValueKey('zi-field-f1-$id')), matching: find.byType(EditableText));
     Finder nameBox() => box('name');
     Finder chatList() => find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first;
@@ -704,6 +768,23 @@ void main() {
       await tester.pumpAndSettle();
       expect(turns.starts, hasLength(1));
       expect(find.text('Fill this in'), findsOneWidget);
+    });
+
+    testWidgets("a form in the conversation's language checks in it, and says Sent in it; the chat's input stays in the app's", (tester) async {
+      turns.script([started, book(language: 'ru'), done]);
+      await open(tester);
+      await type(tester, 'забронировать стол');
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pumpAndSettle();
+      expect(turns.starts, hasLength(1));
+      expect(find.text('Заполните это поле'), findsOneWidget);
+      expect(find.text('Type a message'), findsOneWidget);
+      await tester.enterText(nameBox(), 'Ali');
+      turns.script([started, done]);
+      await tester.tap(find.byKey(const ValueKey('zi-form-send')));
+      await tester.pumpAndSettle();
+      expect(find.text('Отправлено'), findsOneWidget);
+      expect(turns.starts.last.toJson()['language'], 'en');
     });
 
     testWidgets('typing in the chat\'s own input keeps the form\'s parsed template and what is typed', (tester) async {
@@ -848,6 +929,14 @@ void main() {
       await type(tester, 'rate');
       expect(tester.widget<Text>(find.byKey(const ValueKey('zi-form-update'))).data, 'Update the app to answer this.');
       expect(find.text('Your name'), findsNothing);
+    });
+
+    testWidgets("the update line is in the form's language", (tester) async {
+      turns.script([started, book(language: 'ru', surface: const {'createSurface': {'root': 'root', 'components': [
+        {'id': 'root', 'component': 'Slider', 'field': 'stars', 'label': 'Stars'}]}}), done]);
+      await open(tester);
+      await type(tester, 'rate');
+      expect(tester.widget<Text>(find.byKey(const ValueKey('zi-form-update'))).data, 'Обновите приложение, чтобы ответить.');
     });
 
     testWidgets('no "Thinking…" while a form waits for the person; it shows while the answers are being sent', (tester) async {

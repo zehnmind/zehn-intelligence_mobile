@@ -70,12 +70,20 @@ class ZiSurfaceView extends StatelessWidget {
     required this.language,
     required this.onAction,
     this.form,
+    this.mapLanguage,
   });
 
   final ZiSurface surface;
   final Object? data;
   final ZiTheme theme;
+
+  /// The card's language: the SDK's own words on it ("Choose", check
+  /// errors) and its dates, numbers and money.
   final String language;
+
+  /// The language a `{uz, ru, en}` map in the template or [data] is picked
+  /// in, then `en`; [language] when null.
+  final String? mapLanguage;
   final void Function(ZiSurfaceAction action) onAction;
 
   /// Set when the card is a form: blocks read what is typed from `/form`, and Send asks the form.
@@ -97,7 +105,7 @@ class ZiSurfaceView extends StatelessWidget {
 }
 
 class _Builder {
-  _Builder(this.v, Object? data) : values = ZiValues(data, v.language);
+  _Builder(this.v, Object? data) : values = ZiValues(data, v.language, mapLanguage: v.mapLanguage);
 
   final ZiSurfaceView v;
   ZiTheme get t => v.theme;

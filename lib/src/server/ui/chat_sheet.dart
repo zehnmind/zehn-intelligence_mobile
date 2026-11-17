@@ -195,7 +195,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         child: builder != null
             ? builder(c, item.data, ZiComponentController(onCompleted: () => Navigator.of(c).maybePop()))
-            : _surface(item.surface, item.data),
+            : _surface(item.surface, item.data, language: item.language),
       ),
     ));
   }
@@ -239,7 +239,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   Widget _component(ZiComponentItem item) {
     final builder = widget.builders[item.component];
     if (builder != null) return builder(context, item.data, const ZiComponentController());
-    return _surface(item.surface, item.data);
+    return _surface(item.surface, item.data, language: item.language);
   }
 
   /// Each template, parsed once, by the map it came in: its [ZiSurface], or
@@ -247,15 +247,20 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   /// input rebuilds the sheet; the cards must not be parsed again for it.
   final _parsed = Expando<Object>('templates');
 
-  Widget _surface(Map<String, Object?>? json, Map<String, Object?> data) {
+  /// A card drawn in [language], the conversation's, which the server sends
+  /// with it; the app's when it sent none. A `{uz, ru, en}` map that still
+  /// arrives is picked in the app's language.
+  Widget _surface(Map<String, Object?>? json, Map<String, Object?> data, {required String? language}) {
     if (json == null) return const SizedBox.shrink();
     final parsed = _parsed[json] ??= _parse(json);
     if (parsed is! ZiSurface) return const SizedBox.shrink();
+    final app = widget.language();
     return ZiSurfaceView(
       surface: parsed,
       data: data,
       theme: ZiTheme(_settings.theme),
-      language: widget.language(),
+      language: language ?? app,
+      mapLanguage: app,
       onAction: _onAction,
     );
   }
@@ -276,7 +281,8 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
   /// root `Box` is the card.
   Widget _formCard(ZiFormItem item, {required bool busy}) {
     final draft = widget.cubit.formDraft(item.formId);
-    final language = widget.language();
+    final app = widget.language();
+    final language = item.language ?? app;
     final Widget card;
     if (draft == null) {
       card = const SizedBox.shrink();
@@ -294,6 +300,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
         data: item.data,
         theme: ZiTheme(_settings.theme),
         language: language,
+        mapLanguage: app,
         onAction: _onAction,
         form: ZiFormScope(
           formId: item.formId,
@@ -854,7 +861,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       ),
     ),
     ZiComponentItem() => _component(item),
-    ZiConfirmItem() => _confirmCard(item, s, words, busy: busy),
+    ZiConfirmItem() => _confirmCard(item, s, busy: busy),
     ZiFormItem() => _formCard(item, busy: busy),
     ZiErrorItem() => Container(
       width: double.infinity,
@@ -881,8 +888,10 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
 
   /// A data-changing call: one card with the server's template and, under
   /// it, Cancel and Confirm. One tap answers it; nothing reaches the app's
-  /// API before Confirm. The card's colours and radius are the theme's.
-  Widget _confirmCard(ZiConfirmItem item, ZiChatStyle s, ZiStrings words, {required bool busy}) {
+  /// API before Confirm. The card's colours and radius are the theme's; its
+  /// words are in the card's language, the app's when the server sent none.
+  Widget _confirmCard(ZiConfirmItem item, ZiChatStyle s, {required bool busy}) {
+    final words = ZiStrings.of(item.language ?? widget.language());
     final t = ZiTheme(_settings.theme);
     final pending = item.status == ZiConfirmStatus.pending;
     final onSurface = t.color('on_surface', s.ink);
@@ -917,7 +926,7 @@ class _ZiChatSheetState extends State<ZiChatSheet> {
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (item.surface != null)
-          _surface(item.surface, item.data)
+          _surface(item.surface, item.data, language: item.language)
         else
           Text(words.confirmDefault, style: s.bodyMedium.copyWith(color: onSurface)),
         const SizedBox(height: 16),

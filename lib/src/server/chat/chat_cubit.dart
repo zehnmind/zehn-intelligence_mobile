@@ -181,6 +181,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       surface: event.surface,
       data: event.props,
       label: event.confirmLabel,
+      language: event.language,
     );
     _emit(state.copyWith(items: [...state.items, card]));
     _expiry[event.actionId]?.cancel();
@@ -249,6 +250,7 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       tool: event.tool,
       surface: event.surface,
       data: event.props,
+      language: event.language,
     );
     _emit(state.copyWith(items: [...state.items, form]));
   }
@@ -651,7 +653,15 @@ class ZiChatCubit extends Cubit<ZiChatState> {
       'route' => ZiComponentKind.route,
       _ => ZiComponentKind.inline,
     };
-    final item = ZiComponentItem(event.callId, event.component, kind, event.props, surface: event.surface, route: event.route);
+    final item = ZiComponentItem(
+      event.callId,
+      event.component,
+      kind,
+      event.props,
+      surface: event.surface,
+      route: event.route,
+      language: event.language,
+    );
     if (kind == ZiComponentKind.inline) {
       _emit(state.copyWith(items: [...state.items, item]));
     } else if (!_opens.isClosed) {

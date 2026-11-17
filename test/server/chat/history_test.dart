@@ -125,6 +125,24 @@ void main() {
       ]);
     });
 
+    test('each card keeps the language it was drawn in, so a reopened chat draws it the same way', () {
+      final c = ZiConversation.fromJson({
+        ...conversationJson(),
+        'messages': [
+          {'role': 'assistant', 'type': 'component', 'component': 'cinema_card', 'props': {'name': 'Cinematica'}, 'language': 'ru'},
+          {'role': 'assistant', 'type': 'confirm', 'action_id': 'a-1', 'tool': 'parking.reserve', 'language': 'ru'},
+          {'role': 'assistant', 'type': 'form', 'form_id': 'f1', 'surface': bookCard, 'status': 'pending', 'language': 'ru'},
+          {'role': 'assistant', 'type': 'confirm', 'action_id': 'a-2', 'tool': 'parking.reserve'},
+        ],
+      });
+      expect(c.items, [
+        const ZiComponentItem('h0', 'cinema_card', ZiComponentKind.inline, {'name': 'Cinematica'}, language: 'ru'),
+        const ZiConfirmItem(actionId: 'a-1', tool: 'parking.reserve', method: '', language: 'ru'),
+        const ZiFormItem(formId: 'f1', callId: 'h2', component: '', tool: '', surface: bookCard, language: 'ru'),
+        const ZiConfirmItem(actionId: 'a-2', tool: 'parking.reserve', method: ''),
+      ]);
+    });
+
     test('anything broken reads as an empty conversation, not a crash', () {
       final c = ZiConversation.fromJson({'conversation_id': 'c1', 'messages': 'nope'});
       expect(c.summary.id, 'c1');
