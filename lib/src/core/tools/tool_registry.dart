@@ -211,23 +211,19 @@ class AgentToolRegistry {
   /// sign in.
   List<String> get decideNotes => [
     for (final tool in enabled)
-      if (AgentConfigPick.text(
-            _overlay.text[tool.name]?.decideNotes,
-            tool.decideNotes,
-          )
-          case final notes? when notes.trim().isNotEmpty)
-        notes,
+      ?AgentConfigPick.text(
+        _overlay.text[tool.name]?.decideNotes,
+        tool.decideNotes,
+      ),
   ];
 
   /// Reply rules of every enabled tool, in catalog order.
   List<String> get renderNotes => [
     for (final tool in enabled)
-      if (AgentConfigPick.text(
-            _overlay.text[tool.name]?.renderNotes,
-            tool.renderNotes,
-          )
-          case final notes? when notes.trim().isNotEmpty)
-        notes,
+      ?AgentConfigPick.text(
+        _overlay.text[tool.name]?.renderNotes,
+        tool.renderNotes,
+      ),
   ];
 
   /// Runs every enabled tool's [AgentTool.prime] once, concurrently. The same
