@@ -257,13 +257,15 @@ data: {"turn_id":"7b2e...","seq":3,"text":"Here are some"}
 | `transcript` | `text`, `language` | Spoken question only. This is what we heard: show it as the user's bubble. |
 | `text.delta` | `text` | Append to the assistant's bubble. The text can contain **Markdown**: render it. |
 | `client_api_request` | `call_id`, `tool`, `args` | Run the registered handler for `tool`. |
-| `mount_component` | `call_id`, `component`, `kind`, `props` | Show the registered widget. `kind`: `inline` (in the chat), `sheet` (bottom sheet) or `route` (a full screen: close the chat sheet first). |
-| `form` | `call_id`, `form_id`, `component`, `tool`, `surface`, `props` | Draw the form card, inline, with `props.form` (what is already filled in). The answers go back as a turn (section 1); the card is described in `docs/DYNAMIC_CARDS.md`, section 4. An SDK older than 0.7.0 ignores it. |
+| `mount_component` | `call_id`, `component`, `kind`, `props`, `language` | Show the registered widget. `kind`: `inline` (in the chat), `sheet` (bottom sheet) or `route` (a full screen: close the chat sheet first). A card (`inline` or `sheet`) carries `language`, the conversation's: draw it in that language (see below). |
+| `form` | `call_id`, `form_id`, `component`, `tool`, `surface`, `props`, `language` | Draw the form card, inline, with `props.form` (what is already filled in), in `language` (see below). The answers go back as a turn (section 1); the card is described in `docs/DYNAMIC_CARDS.md`, section 4. An SDK older than 0.7.0 ignores it. |
 | `audio` | `format`, `text`, `data` | `voice_reply` only. One clip of the spoken answer, base64 (`mp3`). Queue the clips and play them in `seq` order. |
 | `suggestions` | `items` | Up to 3 follow-up questions, sent just before `done`. Show them as chips. A tap sends the chip as a typed question. |
 | `turn.paused` | `call_ids`, `deadline`, `expires_in`, `max_result_bytes` | Ends this stream. Post the results of `call_ids` (section 2). |
 | `done` | `outcome` | Ends the turn. `outcome` is `answered`, `refused` or `limit` (the round limit was hit). |
 | `error` | `error {code, i18n_key, params, message}`, `retryable` | Ends the turn. Nothing of it is saved. Show the error, with "try again" only if `retryable`. |
+
+**A card's language.** A card (`mount_component` with a card, `confirm`, `form`) carries `language`, the language of the conversation, which can differ from the app's. The SDK draws the card in it: its own words on the card (a form's "Choose" and check errors, "update the app", a confirm card's Cancel, Confirm, default question and Confirmed / Cancelled / Expired) and its dates, numbers and money. `confirm_label` comes from the server already in that language. The history keeps `language` on each card, so a reopened chat draws it the same way. A `{uz, ru, en}` map that still arrives on a card has no text in the conversation's language (the server turns every map that has into that text): it is picked in the app's language, then `en`. The chat's own frame (input hint, welcome, "Online", the button) stays in the app's language, and so does the `language` the SDK sends on `POST /v1/turns` and `/v1/suggestions`. Without `language` (an older server), the card is drawn in the app's language.
 
 A turn with one round of tools:
 

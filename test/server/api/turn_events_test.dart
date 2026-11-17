@@ -131,6 +131,24 @@ void main() {
     expect(e.props, {'form': {'date': '2026-11-14'}});
   });
 
+  test("mount_component, confirm and form carry the conversation's language; an older server sends none", () {
+    final card = event('mount_component', {'component': 'cinema_card', 'language': 'ru'}) as MountComponent;
+    final confirm = event('confirm', {'action_id': 'a1', 'language': 'ru'}) as ConfirmEvent;
+    final form = event('form', {'form_id': 'f1', 'surface': <String, Object?>{}, 'language': 'ru'}) as FormEvent;
+    expect((card.language, confirm.language, form.language), ('ru', 'ru', 'ru'));
+    final older = [
+      event('mount_component', {'component': 'cinema_card'}) as MountComponent,
+      event('confirm', {'action_id': 'a1', 'language': ''}) as ConfirmEvent,
+      event('form', {'form_id': 'f1', 'surface': <String, Object?>{}, 'language': 7}) as FormEvent,
+    ];
+    expect([for (final e in older) switch (e) {
+      MountComponent() => e.language,
+      ConfirmEvent() => e.language,
+      FormEvent() => e.language,
+      _ => 'other',
+    }], [null, null, null]);
+  });
+
   test('form without a form_id or a surface throws FormatException', () {
     expect(() => event('form', {'form_id': 'f1'}), throwsFormatException);
     expect(() => event('form', {'surface': <String, Object?>{}}), throwsFormatException);

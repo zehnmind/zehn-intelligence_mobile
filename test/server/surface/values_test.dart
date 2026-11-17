@@ -41,4 +41,17 @@ void main() {
     expect(c.text('{/price|money:UZS}', null), '10,000\u00A0UZS');
     expect(c.text({'path': 'title'}, {'title': 'Michael'}), 'Michael');
   });
+
+  test("a card in the conversation's language picks a language map that still arrives in the app's, then en", () {
+    const c = ZiValues({
+      'name': {'uz': 'Kino', 'en': 'Cinema'},
+      'price': 10000,
+    }, 'ru', mapLanguage: 'uz');
+    expect(c.language, 'ru');
+    expect(c.text({'path': '/name'}, null), 'Kino');
+    expect(c.text({'en': 'Open', 'uz': 'Ochiq'}, null), 'Ochiq');
+    const english = ZiValues({'name': {'uz': 'Kino', 'en': 'Cinema'}}, 'ru', mapLanguage: 'ru');
+    expect(english.text({'path': '/name'}, null), 'Cinema');
+    expect(c.text('{/price|money:UZS}', null), '10\u00A0000\u00A0UZS');
+  });
 }

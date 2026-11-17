@@ -4,14 +4,21 @@ const _languages = {'uz', 'ru', 'en'};
 
 /// Reads a template's values against a card's data (DYNAMIC_CARDS §6.2).
 class ZiValues {
-  const ZiValues(this.data, this.language);
+  const ZiValues(this.data, this.language, {String? mapLanguage}) : mapLanguage = mapLanguage ?? language;
 
   final Object? data;
+
+  /// The card's language: its formats and the SDK's own words.
   final String language;
+
+  /// The language a `{uz, ru, en}` map is picked in, then `en`. The server
+  /// already turns a map with text in the conversation's language into that
+  /// text, so one that still arrives is picked in the app's.
+  final String mapLanguage;
 
   bool _localized(Map<Object?, Object?> m) => m.isNotEmpty && m.keys.every(_languages.contains);
 
-  Object? _pick(Map<Object?, Object?> m) => m[language] ?? m['en'] ?? m.values.first;
+  Object? _pick(Map<Object?, Object?> m) => m[mapLanguage] ?? m['en'] ?? m.values.first;
 
   /// `/a/b` reads the card's data, `a/b` reads [item]; a language map is picked.
   Object? lookup(String path, Object? item) {

@@ -35,7 +35,7 @@ final class ZiAssistantItem extends ZiChatItem {
 enum ZiComponentKind { inline, sheet, route }
 
 final class ZiComponentItem extends ZiChatItem {
-  const ZiComponentItem(this.callId, this.component, this.kind, this.data, {this.surface, this.route});
+  const ZiComponentItem(this.callId, this.component, this.kind, this.data, {this.surface, this.route, this.language});
 
   final String callId;
   final String component;
@@ -51,8 +51,12 @@ final class ZiComponentItem extends ZiChatItem {
   /// The route template from the event, for [ZiComponentKind.route].
   final String? route;
 
+  /// The conversation's language the card is drawn in; null draws it in
+  /// the app's.
+  final String? language;
+
   @override
-  List<Object?> get props => [callId, component, kind, data, surface, route];
+  List<Object?> get props => [callId, component, kind, data, surface, route, language];
 }
 
 enum ZiConfirmStatus { pending, confirmed, cancelled, expired }
@@ -68,6 +72,7 @@ final class ZiConfirmItem extends ZiChatItem {
     this.data = const {},
     this.label,
     this.status = ZiConfirmStatus.pending,
+    this.language,
   });
 
   final String actionId;
@@ -84,11 +89,23 @@ final class ZiConfirmItem extends ZiChatItem {
   final String? label;
   final ZiConfirmStatus status;
 
-  ZiConfirmItem withStatus(ZiConfirmStatus next) =>
-      ZiConfirmItem(actionId: actionId, tool: tool, method: method, surface: surface, data: data, label: label, status: next);
+  /// The conversation's language the card and its buttons are drawn in;
+  /// null draws them in the app's.
+  final String? language;
+
+  ZiConfirmItem withStatus(ZiConfirmStatus next) => ZiConfirmItem(
+    actionId: actionId,
+    tool: tool,
+    method: method,
+    surface: surface,
+    data: data,
+    label: label,
+    status: next,
+    language: language,
+  );
 
   @override
-  List<Object?> get props => [actionId, tool, method, surface, data, label, status];
+  List<Object?> get props => [actionId, tool, method, surface, data, label, status, language];
 }
 
 /// A card with fields (the `form` event) waiting for, or past, the user's
@@ -102,6 +119,7 @@ final class ZiFormItem extends ZiChatItem {
     required this.surface,
     this.data = const {},
     this.status = ZiFormStatus.pending,
+    this.language,
   });
 
   final String formId;
@@ -116,6 +134,10 @@ final class ZiFormItem extends ZiChatItem {
   final Map<String, Object?> data;
   final ZiFormStatus status;
 
+  /// The conversation's language the form is drawn in; null draws it in
+  /// the app's.
+  final String? language;
+
   ZiFormItem withStatus(ZiFormStatus next) => ZiFormItem(
     formId: formId,
     callId: callId,
@@ -124,10 +146,11 @@ final class ZiFormItem extends ZiChatItem {
     surface: surface,
     data: data,
     status: next,
+    language: language,
   );
 
   @override
-  List<Object?> get props => [formId, callId, component, tool, surface, data, status];
+  List<Object?> get props => [formId, callId, component, tool, surface, data, status, language];
 }
 
 final class ZiErrorItem extends ZiChatItem {
